@@ -1,0 +1,6 @@
+@DevTavern.Server_HostAddress = http://localhost:5114
+
+GET {{DevTavern.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

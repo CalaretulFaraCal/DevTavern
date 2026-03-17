@@ -1,0 +1,7 @@
+# Ignoram folderel unde se compileaza lucrurile local
+# Daca le copiem in Docker pot crea conflicte
+bin/
+obj/
+.git/
+.vs/
+.vscode/
