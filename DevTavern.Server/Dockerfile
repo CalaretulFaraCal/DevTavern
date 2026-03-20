@@ -1,35 +1,26 @@
-# ETAPA 1: Construirea aplicației (Build)
-# Luăm o imagine oficială de la Microsoft care are uneltele necesare să compileze cod C# (.NET 8 SDK)
+# Etapa 1: Build (Aici descărcăm unelte grele doar ca să compilăm codul, nu să-l rulăm)
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
-
-# Setăm folderul curent în interiorul containerului ca fiind /src
-WORKDIR /src
-
-# Copiem fișierul de proiect și descărcăm dependențele (NuGet packages)
-# Astfel folosim cache-ul Docker pentru a grăbi viitoarele build-uri
-COPY ["DevTavern.Server.csproj", "./"]
-RUN dotnet restore "DevTavern.Server.csproj"
-
-# Copiem tot restul codului din computerul nostru în container
-COPY . .
-
-# Compilăm aplicația în folderul /app/build, modul Release (optimizat)
-RUN dotnet build "DevTavern.Server.csproj" -c Release -o /app/build
-
-# Publicăm aplicația (creăm fișierele finale gata de rulat) într-un alt folder /app/publish
-RUN dotnet publish "DevTavern.Server.csproj" -c Release -o /app/publish /p:UseAppHost=false
-
-# ETAPA 2: Rularea aplicației (Runtime)
-# Nu vrem să rulăm aplicația pe o imagine greoaie cu SDK (care are ~800MB),
-# așa că luăm o imagine mult mai mică de la Microsoft doar cu mediul de rulare aspnet.
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
-# Expunem portul 8080 (asta e portul standard intern pe care îl va asculta serverul în Linux)
+# Copiem doar fișierul CSPROJ (lista de pachete) și instalăm ce trebuie (NuGet restore)
+COPY ["DevTavern.Server.csproj", "./"]
+RUN dotnet restore "./DevTavern.Server.csproj"
+
+# Acum copiem tot restul codului și îl compilăm oficial (Build Succeeded)
+COPY . .
+WORKDIR "/app/."
+RUN dotnet build "DevTavern.Server.csproj" -c Release -o /app/build
+
+# Acum îl publicăm într-un folder mic, curat, gata de "Production"
+RUN dotnet publish "DevTavern.Server.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+# Etapa 2: Run (Aceasta este imaginea ultra-ușoară pe care o va primi clientul / profesorul)
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+WORKDIR /app
 EXPOSE 8080
 
-# Copiem fișierele publicate de la Etapa 1 în această nouă "mașinărie" de runtime
+# Luăm folderul "publish" din etapa de build și îl lipim aici în etapa finală
 COPY --from=build /app/publish .
 
-# Comanda finală: Când acest container "prinde viață", rulează serverul!
+# Comanda cu care va porni aplicația de fiecare dată când containerul Docker se aprinde
 ENTRYPOINT ["dotnet", "DevTavern.Server.dll"]
