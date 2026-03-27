@@ -1,6 +1,7 @@
 using DevTavern.Server.Data;
 using DevTavern.Server.Factories;
 using DevTavern.Server.Repositories;
+using DevTavern.Server.Hubs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using AspNet.Security.OAuth.GitHub;
@@ -13,6 +14,20 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
 // Configureaza "Fabrica" invizibila care va da navale pe internet cand avem nevoie (Pentru extragere repo GitHub)
 builder.Services.AddHttpClient();
+
+// === Adăugiri obligatorii pentru frontend (CORS și WebSockets) === //
+builder.Services.AddSignalR(); 
+
+builder.Services.AddCors(options =>
+{
+    // Această politică permite oricărui "Calculator Străin / Front-End" să intre și să ne folosească porturile
+    options.AddPolicy("AllowFrontendPolicy", policy => 
+        policy.SetIsOriginAllowed(origin => true) // Permite React, Vue, Svelte, orice localhost:port
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials());
+});
+// ================================================================ //
 
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 builder.Services.AddSingleton<IChannelFactory, ChannelFactory>();
@@ -58,9 +73,14 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.UseCors("AllowFrontendPolicy");
+
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Aici e ușa oficială la care se va conecta aplicația React/Vite a colegului cu .withUrl('/chat')!
+app.MapHub<ChatHub>("/chat");
 
 app.Run();

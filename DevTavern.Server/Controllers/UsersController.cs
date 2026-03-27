@@ -57,8 +57,6 @@ namespace DevTavern.Server.Controllers
                 return BadRequest("Datele utilizatorului sunt invalide.");
             }
 
-            // Mai tarziu aici vom verifica daca exista deja contul de GitHub
-
             // Folosim functia automata din sablonul nostru
             await _userRepository.AddAsync(newUser);
             

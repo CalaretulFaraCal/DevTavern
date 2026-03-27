@@ -50,25 +50,31 @@ namespace DevTavern.Server.Controllers
             return CreatedAtAction(nameof(GetProject), new { id = newProject.Id }, newProject);
         }
 
-        // Endpoint GET /api/projects/github/{username}
-        // [CERINTA 11] Cauta pe internet (API-ul public GitHub) lista de Repository-uri ale unui anume cont
-        [HttpGet("github/{username}")]
-        public async Task<IActionResult> GetGitHubRepositories(string username)
+        // Endpoint GET /api/projects/github/my-projects
+        // [CERINTA 11] Cauta pe internet (API-ul public GitHub) lista TUTUROR Repo-urilor (inclusiv cele private sau cu colaboratori)
+        [HttpGet("github/my-projects")]
+        public async Task<IActionResult> GetMyGitHubRepositories([FromQuery] string githubPersonalAccessToken)
         {
+            if (string.IsNullOrWhiteSpace(githubPersonalAccessToken))
+                return BadRequest("Avem nevoie de token-ul tău de pe GitHub pentru a aduce proiectele private.");
+
             var client = _httpClientFactory.CreateClient();
             
-            // GitHub cere obligatoriu un 'User-Agent', altfel ne respinge cererea
+            // Ne inregistram ca aplicatie 
             client.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Universitate");
+            
+            // ATASIAM PAROLA DE LA GITHUB LA CERERE
+            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {githubPersonalAccessToken}");
 
-            // Trimitem cererea HTTP adevarata catre internet
-            var response = await client.GetAsync($"https://api.github.com/users/{username}/repos");
+            // Facem cerere MAJORA spre serverele GitHub (/user/repos in loc de /users/nume/repos)
+            // Acest link trage absolut tot ce vezi cand te uiti in propriul cont.
+            var response = await client.GetAsync($"https://api.github.com/user/repos?type=all");
             
             if (!response.IsSuccessStatusCode)
             {
-                return NotFound($"Eroare GitHub API. Probabil contul '{username}' nu exista.");
+                return BadRequest($"Eroare GitHub API. Token-ul este greșit sau invalid.");
             }
 
-            // Citim si trimitem JSON-ul pur mai departe aplicatiei noastre
             var content = await response.Content.ReadAsStringAsync();
             return Content(content, "application/json");
         }
