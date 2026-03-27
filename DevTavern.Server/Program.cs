@@ -8,31 +8,28 @@ using AspNet.Security.OAuth.GitHub;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// Database
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Configureaza "Fabrica" invizibila care va da navale pe internet cand avem nevoie (Pentru extragere repo GitHub)
 builder.Services.AddHttpClient();
+builder.Services.AddSignalR();
 
-// === Adăugiri obligatorii pentru frontend (CORS și WebSockets) === //
-builder.Services.AddSignalR(); 
-
+// CORS - permite frontend-ului sa acceseze API-ul
 builder.Services.AddCors(options =>
 {
-    // Această politică permite oricărui "Calculator Străin / Front-End" să intre și să ne folosească porturile
     options.AddPolicy("AllowFrontendPolicy", policy => 
-        policy.SetIsOriginAllowed(origin => true) // Permite React, Vue, Svelte, orice localhost:port
+        policy.SetIsOriginAllowed(origin => true)
               .AllowAnyMethod()
               .AllowAnyHeader()
               .AllowCredentials());
 });
-// ================================================================ //
 
+// Dependency Injection - Repository Pattern + Factory Pattern
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 builder.Services.AddSingleton<IChannelFactory, ChannelFactory>();
 
-// Configureaza Baza OAuth pentru GitHub
+// OAuth GitHub Authentication
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
@@ -46,8 +43,6 @@ builder.Services.AddAuthentication(options =>
     options.ClientId = builder.Configuration["Authentication:GitHub:ClientId"]!;
     options.ClientSecret = builder.Configuration["Authentication:GitHub:ClientSecret"]!;
     options.CallbackPath = "/signin-github";
-    
-    // Obtinem si adresa de email (necesara pt prof de multe ori)
     options.Scope.Add("user:email");
 });
 
@@ -57,14 +52,13 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// AUTO-MIGRATE DATABASE
+// Auto-migrate database la pornire
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     db.Database.Migrate();
 }
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -72,15 +66,11 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
 app.UseCors("AllowFrontendPolicy");
-
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-
-// Aici e ușa oficială la care se va conecta aplicația React/Vite a colegului cu .withUrl('/chat')!
 app.MapHub<ChatHub>("/chat");
 
 app.Run();

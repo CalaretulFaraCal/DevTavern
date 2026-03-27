@@ -1,49 +1,38 @@
 version: '3.8'
 
 services:
-  # =========================================================
-  # SERVICIUL 1: BAZA DE DATE (SQL Server)
-  # Un container separat, gata facut de Microsoft, care iti va rula baza de date
-  # =========================================================
+  # Container 1: Baza de date SQL Server
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
     container_name: devtavern-db
     environment:
-      # Reguli stricte cerute de serverul SQL cand il pornesti in Docker:
-      - ACCEPT_EULA=Y                             # Accepti termenii si conditiile
-      - SA_PASSWORD=YourStrong!Password123        # Parola puternica (altfel da crash intentionat)
-      - MSSQL_PID=Express                         # Folosim versiunea gratis (Express) ca randeaza pe mai putin RAM
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourStrong!Password123
+      - MSSQL_PID=Express
     ports:
-      - "1433:1433"   # PORT_EXTERN : PORT_INTERN -> sa te poti conecta cu SSMS de pe propriul PC la localhost:1433
+      - "1433:1433"
     volumes:
-      - sqlserver-data:/var/opt/mssql # Toate tabelele salvate sunt mutate intr-un spatiu sigur pe disk, numit volum. Daca opresti sistemul, datele nu se pierd.
-    networks:
-      - devtavern-network # Le punem amandurora o 'cablu de retea invizibil' in comun
-
-  # =========================================================
-  # SERVICIUL 2: APLICATIA NOASTRA BACKEND (API-UL C#)
-  # Cum i-am setat regulile mai sus in Dockerfile-ul facut de noi
-  # =========================================================
-  api:
-    build:
-      context: ./DevTavern.Server     # Uita-te in folderul asta...
-      dockerfile: Dockerfile          # ...si respecta pasii din acest fisier
-    container_name: devtavern-api
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://+:8080 # Ne asiguram ca el asculta pe portul specificat (8080)
-      
-      # ⚠️ CEA MAI IMPORTANTA LINIE ⚠️: 
-      # Inlocuim adresa bazei de date din codul tau C# cu "Server=sqlserver", adica numele serviciului 1!
-      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=DevTavernDb;User Id=sa;Password=YourStrong!Password123;TrustServerCertificate=True;
-    ports:
-      - "5114:8080" # Tu scrii in browser: http://localhost:5114, si Docker redirectioneaza spre API in portul lui 8080
-    depends_on:
-      - sqlserver # Asigura-te ca serverul de baze de date a pornit primul
+      - sqlserver-data:/var/opt/mssql
     networks:
       - devtavern-network
 
-# Definim sectiunea unde 'volumes' si 'networks' sunt create in PC-ul tau fizic
+  # Container 2: API-ul C# (.NET 8)
+  api:
+    build:
+      context: ./DevTavern.Server
+      dockerfile: Dockerfile
+    container_name: devtavern-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=DevTavernDb;User Id=sa;Password=YourStrong!Password123;TrustServerCertificate=True;
+    ports:
+      - "5114:8080"
+    depends_on:
+      - sqlserver
+    networks:
+      - devtavern-network
+
 volumes:
   sqlserver-data:
 

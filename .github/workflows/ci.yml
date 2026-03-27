@@ -1,6 +1,5 @@
 name: CI - Build & Test
 
-# Cand ruleaza: la fiecare push sau pull request pe main, dev sau test
 on:
   push:
     branches: [ main, dev, test ]
@@ -12,24 +11,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # Pasul 1: Descarca codul din repo
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Pasul 2: Instaleaza .NET 8 pe serverul temporar GitHub
     - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
 
-    # Pasul 3: Instaleaza pachetele NuGet (EF Core, etc.)
     - name: Restore dependencies
       run: dotnet restore
 
-    # Pasul 4: Compileaza tot proiectul
     - name: Build
       run: dotnet build --no-restore --configuration Release
 
-    # Pasul 5: Ruleaza testele din DevTavern.Tests
     - name: Run Tests
       run: dotnet test --no-build --configuration Release --verbosity normal

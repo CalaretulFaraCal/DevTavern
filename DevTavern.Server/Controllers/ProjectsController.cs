@@ -4,6 +4,7 @@ using DevTavern.Server.Repositories;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Net.Http;
+using System.Text.Json;
 
 namespace DevTavern.Server.Controllers
 {
@@ -14,14 +15,13 @@ namespace DevTavern.Server.Controllers
         private readonly IRepository<Project> _projectRepository;
         private readonly IHttpClientFactory _httpClientFactory;
 
-        // Dependency Injection extins: cerem si "fabrica de browser" pentru a lua date de pe net
         public ProjectsController(IRepository<Project> projectRepository, IHttpClientFactory httpClientFactory)
         {
             _projectRepository = projectRepository;
             _httpClientFactory = httpClientFactory;
         }
 
-        // Endpoint GET /api/projects
+        // GET /api/projects
         [HttpGet]
         public async Task<ActionResult<IEnumerable<Project>>> GetProjects()
         {
@@ -29,7 +29,7 @@ namespace DevTavern.Server.Controllers
             return Ok(projects);
         }
 
-        // Endpoint GET /api/projects/{id}
+        // GET /api/projects/{id}
         [HttpGet("{id}")]
         public async Task<ActionResult<Project>> GetProject(int id)
         {
@@ -38,8 +38,7 @@ namespace DevTavern.Server.Controllers
             return Ok(project);
         }
 
-        // Endpoint POST /api/projects
-        // Metoda prin care se adauga un proiect/repository nou de pe GitHub in aplicatia noastra
+        // POST /api/projects
         [HttpPost]
         public async Task<ActionResult<Project>> CreateProject(Project newProject)
         {
@@ -50,8 +49,7 @@ namespace DevTavern.Server.Controllers
             return CreatedAtAction(nameof(GetProject), new { id = newProject.Id }, newProject);
         }
 
-        // Endpoint GET /api/projects/github/my-projects
-        // [CERINTA 11] Cauta pe internet (API-ul public GitHub) lista TUTUROR Repo-urilor (inclusiv cele private sau cu colaboratori)
+        // GET /api/projects/github/my-projects - aduce repo-urile GitHub (filtrate, doar ce e util)
         [HttpGet("github/my-projects")]
         public async Task<IActionResult> GetMyGitHubRepositories([FromQuery] string githubPersonalAccessToken)
         {
@@ -59,15 +57,9 @@ namespace DevTavern.Server.Controllers
                 return BadRequest("Avem nevoie de token-ul tău de pe GitHub pentru a aduce proiectele private.");
 
             var client = _httpClientFactory.CreateClient();
-            
-            // Ne inregistram ca aplicatie 
             client.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Universitate");
-            
-            // ATASIAM PAROLA DE LA GITHUB LA CERERE
             client.DefaultRequestHeaders.Add("Authorization", $"Bearer {githubPersonalAccessToken}");
 
-            // Facem cerere MAJORA spre serverele GitHub (/user/repos in loc de /users/nume/repos)
-            // Acest link trage absolut tot ce vezi cand te uiti in propriul cont.
             var response = await client.GetAsync($"https://api.github.com/user/repos?type=all");
             
             if (!response.IsSuccessStatusCode)
@@ -76,7 +68,28 @@ namespace DevTavern.Server.Controllers
             }
 
             var content = await response.Content.ReadAsStringAsync();
-            return Content(content, "application/json");
+            var repos = JsonSerializer.Deserialize<JsonElement>(content);
+
+            // Filtrăm doar câmpurile utile din răspunsul GitHub
+            var filteredRepos = new List<object>();
+            foreach (var repo in repos.EnumerateArray())
+            {
+                filteredRepos.Add(new
+                {
+                    id = repo.GetProperty("id").GetInt64(),
+                    name = repo.GetProperty("name").GetString(),
+                    fullName = repo.GetProperty("full_name").GetString(),
+                    isPrivate = repo.GetProperty("private").GetBoolean(),
+                    owner = repo.GetProperty("owner").GetProperty("login").GetString(),
+                    description = repo.TryGetProperty("description", out var desc) ? desc.GetString() : null,
+                    language = repo.TryGetProperty("language", out var lang) ? lang.GetString() : null,
+                    url = repo.GetProperty("html_url").GetString(),
+                    createdAt = repo.GetProperty("created_at").GetString(),
+                    updatedAt = repo.GetProperty("updated_at").GetString()
+                });
+            }
+
+            return Ok(filteredRepos);
         }
     }
 }
