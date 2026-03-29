@@ -7,7 +7,7 @@ services:
     container_name: devtavern-db
     environment:
       - ACCEPT_EULA=Y
-      - SA_PASSWORD=YourStrong!Password123
+      - SA_PASSWORD=${DB_PASSWORD}
       - MSSQL_PID=Express
     ports:
       - "1433:1433"
@@ -25,7 +25,9 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
-      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=DevTavernDb;User Id=sa;Password=YourStrong!Password123;TrustServerCertificate=True;
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=DevTavernDb;User Id=sa;Password=${DB_PASSWORD};TrustServerCertificate=True;
+      - Authentication__GitHub__ClientId=${GITHUB_CLIENT_ID}
+      - Authentication__GitHub__ClientSecret=${GITHUB_CLIENT_SECRET}
     ports:
       - "5114:8080"
     depends_on:
