@@ -76,8 +76,8 @@ namespace DevTavern.Client
             {
                 MyRepos.Add(new RepoItem 
                 { 
-                    id = repo["id"].ToString(), 
-                    name = repo["name"].ToString(), 
+                    id = repo["id"]?.ToString() ?? string.Empty, 
+                    name = repo["name"]?.ToString() ?? string.Empty, 
                     isPrivate = repo["isPrivate"]?.ToObject<bool>() ?? false,
                     isSelected = true 
                 });
@@ -121,8 +121,8 @@ namespace DevTavern.Client
 
     public class RepoItem
     {
-        public string id { get; set; }
-        public string name { get; set; }
+        public string id { get; set; } = string.Empty;
+        public string name { get; set; } = string.Empty;
         public bool isPrivate { get; set; }
         public bool isSelected { get; set; }
     }
