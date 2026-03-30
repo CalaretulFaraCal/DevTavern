@@ -25,7 +25,7 @@ namespace DevTavern.Client.Services
             var context = await listener.GetContextAsync();
             string? code = context.Request.QueryString["code"];
 
-            string responseString = "<html><body><h1>Autentificare cu succes!</h1><p>Poti inchide aceasta fereastra si sa te intorci in aplicatie.</p></body></html>";
+            string responseString = "<html><body><h1>Authentication successful!</h1><p>You can close this window and return to the application.</p></body></html>";
             byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
             context.Response.ContentLength64 = buffer.Length;
             var responseOutput = context.Response.OutputStream;
@@ -35,7 +35,7 @@ namespace DevTavern.Client.Services
             listener.Stop();
 
             if (string.IsNullOrEmpty(code))
-                throw new Exception("Nu am primit cod de autorizare de la GitHub.");
+                throw new Exception("No authorization code received from GitHub.");
 
             return await ExchangeCodeAtOurBackendAsync(code);
         }
@@ -58,7 +58,7 @@ namespace DevTavern.Client.Services
             if (!response.IsSuccessStatusCode)
             {
                 var errDetail = await response.Content.ReadAsStringAsync();
-                throw new Exception($"Eroare Backend: {errDetail}");
+                throw new Exception($"Backend Error: {errDetail}");
             }
 
             var responseBody = await response.Content.ReadAsStringAsync();
