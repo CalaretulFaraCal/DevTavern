@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
+using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -12,9 +13,18 @@ namespace DevTavern.Client.Services
     {
         private const string ClientId = "Ov23liOMdipPuxEsQX05";
         private const string RedirectUri = "http://localhost:12345/callback/";
+        private const string TokenFilePath = "github_token.cache";
 
         public async Task<string> LoginAndGetTokenAsync()
         {
+            // Verificăm dacă avem deja tokenul salvat din sesiunea trecută (Cerere: "sa nu te loghezi mereu")
+            if (File.Exists(TokenFilePath))
+            {
+                string savedToken = await File.ReadAllTextAsync(TokenFilePath);
+                if (!string.IsNullOrWhiteSpace(savedToken))
+                    return savedToken; // Sarim complet peste browser!
+            }
+
             using var listener = new HttpListener();
             listener.Prefixes.Add(RedirectUri);
             listener.Start();
@@ -66,6 +76,12 @@ namespace DevTavern.Client.Services
             
             string? accessToken = json["access_token"]?.ToString();
             
+            // Când login-ul a mers perfect, memorăm token-ul local.
+            if (!string.IsNullOrWhiteSpace(accessToken))
+            {
+                await File.WriteAllTextAsync(TokenFilePath, accessToken);
+            }
+
             return accessToken ?? string.Empty;
         }
     }

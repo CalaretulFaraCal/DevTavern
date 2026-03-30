@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using DevTavern.Server.Models;
 using DevTavern.Server.Repositories;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Net.Http;
 using System.Text.Json;
@@ -43,6 +44,16 @@ namespace DevTavern.Server.Controllers
         public async Task<ActionResult<Project>> CreateProject(Project newProject)
         {
             if (newProject == null) return BadRequest();
+
+            // Verificare duplicat (Cerere: "verificare daca grupul exista deja")
+            var allProjects = await _projectRepository.GetAllAsync();
+            var existenta = allProjects.FirstOrDefault(p => p.Name == newProject.Name);
+
+            if (existenta != null)
+            {
+                // În loc de mesaj teoretic de eroare Backend, returnăm pur și simplu proiectul deja existent ca Front-End-ul să intre în el fluent!
+                return Ok(existenta);
+            }
 
             await _projectRepository.AddAsync(newProject);
             
