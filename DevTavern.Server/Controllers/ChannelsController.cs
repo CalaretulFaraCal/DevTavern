@@ -33,6 +33,15 @@ namespace DevTavern.Server.Controllers
         [HttpPost("generate-defaults/{projectId}")]
         public async Task<ActionResult<IEnumerable<Channel>>> GenerateDefaultChannels(int projectId)
         {
+            var allChannels = await _channelRepository.GetAllAsync();
+            var existingChannels = allChannels.Where(c => c.ProjectId == projectId).ToList();
+
+            if (existingChannels.Any())
+            {
+                // Dacă baza de date zice că grupul ăsta e deschis și are deja canale... le dăm DOAR pe ele, fără a le recrea duplicat!
+                return Ok(existingChannels);
+            }
+
             var techChannel = _channelFactory.CreateProjectChannel(projectId);
             var loungeChannel = _channelFactory.CreateOffTopicChannel(projectId);
 
@@ -53,6 +62,20 @@ namespace DevTavern.Server.Controllers
             await _channelRepository.AddAsync(customChannel);
             
             return CreatedAtAction(nameof(GetChannels), new { id = customChannel.Id }, customChannel);
+        }
+
+        // POST /api/channels/project/{projectId} - Metodă directă ca să adaugi clar canale într-un anume grup
+        [HttpPost("project/{projectId}")]
+        public async Task<ActionResult<Channel>> AddChannelToGroup(int projectId, [FromBody] Channel customChannel)
+        {
+            if (string.IsNullOrWhiteSpace(customChannel.Name)) 
+                return BadRequest("Numele canalului este obligatoriu.");
+
+            // Indiferent ce id vine in JSON, forțăm canalul să aparțină Grupului ales sus
+            customChannel.ProjectId = projectId;
+            
+            await _channelRepository.AddAsync(customChannel);
+            return Ok(customChannel);
         }
     }
 }
