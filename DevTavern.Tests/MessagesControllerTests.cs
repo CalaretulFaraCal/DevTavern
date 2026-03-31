@@ -3,6 +3,8 @@ using Moq;
 using DevTavern.Server.Controllers;
 using DevTavern.Server.Models;
 using DevTavern.Server.Repositories;
+using DevTavern.Server.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -14,12 +16,18 @@ namespace DevTavern.Tests
     public class MessagesControllerTests
     {
         private readonly Mock<IRepository<Message>> _mockMessageRepo;
-        private readonly MessagesController _controller;
 
         public MessagesControllerTests()
         {
             _mockMessageRepo = new Mock<IRepository<Message>>();
-            _controller = new MessagesController(_mockMessageRepo.Object);
+        }
+
+        private ApplicationDbContext CreateInMemoryDbContext()
+        {
+            var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+                .Options;
+            return new ApplicationDbContext(options);
         }
 
         // =====================================================
@@ -30,17 +38,23 @@ namespace DevTavern.Tests
         [Fact]
         public async Task GetMessagesForChannel_ReturnsOnlyMessagesFromThatChannel()
         {
-            // Arrange — 3 mesaje: 2 pe canalul 1 și 1 pe canalul 2
-            var allMessages = new List<Message>
-            {
+            // Arrange — 3 mesaje și utilizatorii lor lipsă
+            var context = CreateInMemoryDbContext();
+            context.Users.AddRange(
+                new User { Id = 1, Username = "User1", GitHubId = "gh1" },
+                new User { Id = 2, Username = "User2", GitHubId = "gh2" }
+            );
+            context.Messages.AddRange(
                 new Message { Id = 1, Content = "Salut!", ChannelId = 1, UserId = 1, SentAt = DateTime.UtcNow.AddMinutes(-10) },
                 new Message { Id = 2, Content = "Ce faci?", ChannelId = 1, UserId = 2, SentAt = DateTime.UtcNow.AddMinutes(-5) },
                 new Message { Id = 3, Content = "Alt canal", ChannelId = 2, UserId = 1, SentAt = DateTime.UtcNow }
-            };
-            _mockMessageRepo.Setup(r => r.GetAllAsync()).ReturnsAsync(allMessages);
+            );
+            await context.SaveChangesAsync();
+            
+            var controller = new MessagesController(_mockMessageRepo.Object, context);
 
             // Act — Cerem mesajele doar pentru canalul 1
-            var result = await _controller.GetMessagesForChannel(1);
+            var result = await controller.GetMessagesForChannel(1);
 
             // Assert — Ar trebui să primim doar 2 mesaje
             var okResult = Assert.IsType<OkObjectResult>(result.Result);
@@ -52,16 +66,22 @@ namespace DevTavern.Tests
         [Fact]
         public async Task GetMessagesForChannel_ReturnsMessagesOrderedByTime()
         {
-            // Arrange — Mesaje în ordine inversă
-            var allMessages = new List<Message>
-            {
+            // Arrange — Mesaje în ordine inversă + conturi user test
+            var context = CreateInMemoryDbContext();
+            context.Users.AddRange(
+                new User { Id = 1, Username = "Testu", GitHubId = "test_g1" },
+                new User { Id = 2, Username = "TestuDoi", GitHubId = "test_g2" }
+            );
+            context.Messages.AddRange(
                 new Message { Id = 1, Content = "Al doilea", ChannelId = 1, UserId = 1, SentAt = DateTime.UtcNow },
                 new Message { Id = 2, Content = "Primul", ChannelId = 1, UserId = 2, SentAt = DateTime.UtcNow.AddMinutes(-30) }
-            };
-            _mockMessageRepo.Setup(r => r.GetAllAsync()).ReturnsAsync(allMessages);
+            );
+            await context.SaveChangesAsync();
+
+            var controller = new MessagesController(_mockMessageRepo.Object, context);
 
             // Act
-            var result = await _controller.GetMessagesForChannel(1);
+            var result = await controller.GetMessagesForChannel(1);
 
             // Assert — Primul mesaj cronologic trebuie să fie "Primul"
             var okResult = Assert.IsType<OkObjectResult>(result.Result);
@@ -74,10 +94,11 @@ namespace DevTavern.Tests
         public async Task GetMessagesForChannel_ReturnsEmpty_WhenNoMessages()
         {
             // Arrange — Niciun mesaj pe canalul 99
-            _mockMessageRepo.Setup(r => r.GetAllAsync()).ReturnsAsync(new List<Message>());
+            var context = CreateInMemoryDbContext();
+            var controller = new MessagesController(_mockMessageRepo.Object, context);
 
             // Act
-            var result = await _controller.GetMessagesForChannel(99);
+            var result = await controller.GetMessagesForChannel(99);
 
             // Assert
             var okResult = Assert.IsType<OkObjectResult>(result.Result);
@@ -93,10 +114,12 @@ namespace DevTavern.Tests
         public async Task SendMessage_ReturnsOk_WithValidMessage()
         {
             // Arrange
+            var context = CreateInMemoryDbContext();
+            var controller = new MessagesController(_mockMessageRepo.Object, context);
             var newMessage = new Message { Content = "Hello world!", ChannelId = 1, UserId = 1 };
 
             // Act
-            var result = await _controller.SendMessage(newMessage);
+            var result = await controller.SendMessage(newMessage);
 
             // Assert
             var okResult = Assert.IsType<OkObjectResult>(result.Result);
@@ -115,10 +138,12 @@ namespace DevTavern.Tests
         public async Task SendMessage_ReturnsBadRequest_WhenContentIsEmpty()
         {
             // Arrange — Mesaj gol (trebuie blocat conform TestPlans T-007)
+            var context = CreateInMemoryDbContext();
+            var controller = new MessagesController(_mockMessageRepo.Object, context);
             var emptyMessage = new Message { Content = "", ChannelId = 1, UserId = 1 };
 
             // Act
-            var result = await _controller.SendMessage(emptyMessage);
+            var result = await controller.SendMessage(emptyMessage);
 
             // Assert — Nu se permite trimiterea
             Assert.IsType<BadRequestObjectResult>(result.Result);
@@ -128,10 +153,12 @@ namespace DevTavern.Tests
         public async Task SendMessage_ReturnsBadRequest_WhenContentIsWhitespace()
         {
             // Arrange — Mesaj cu doar spații
+            var context = CreateInMemoryDbContext();
+            var controller = new MessagesController(_mockMessageRepo.Object, context);
             var whitespaceMessage = new Message { Content = "   ", ChannelId = 1, UserId = 1 };
 
             // Act
-            var result = await _controller.SendMessage(whitespaceMessage);
+            var result = await controller.SendMessage(whitespaceMessage);
 
             // Assert
             Assert.IsType<BadRequestObjectResult>(result.Result);
