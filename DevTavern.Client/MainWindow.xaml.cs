@@ -29,6 +29,7 @@ namespace DevTavern.Client
         private string? _selectedProject;
         private int _selectedChannelId;
         private bool _membersPanelVisible = false;
+        private readonly string _instanceId = Guid.NewGuid().ToString();
 
         // Channels per project: projectName -> list of channels
         private readonly Dictionary<string, ObservableCollection<ChannelItem>> _projectChannels = new();
@@ -96,14 +97,14 @@ namespace DevTavern.Client
 
             // Primim mesaje live de la toti utilizatorii conectati
             // Hub-ul trimite la ALL (inclusiv noi), deci ignoram propriile mesaje ca sa nu le duplicam
-            _hubConnection.On<string, string>("ReceiveMessage", (senderUsername, messageContent) =>
+            _hubConnection.On<string, string, string, int, string>("ReceiveMessage", (senderInstanceId, senderUsername, messageContent, channelId, avatarUrl) =>
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    // Ignoram mesajele trimise de noi (le-am afisat deja local in SendMessage)
-                    if (senderUsername == _username) return;
+                    // Ignoram mesajele trimise de instanta de fata (le-am afisat deja local in SendMessage)
+                    if (senderInstanceId == _instanceId) return;
 
-                    if (_selectedChannelId > 0)
+                    if (_selectedChannelId > 0 && channelId == _selectedChannelId)
                     {
                         Messages.Add(new ChatMessage
                         {
@@ -111,6 +112,7 @@ namespace DevTavern.Client
                             Initials = senderUsername.Length >= 2 ? senderUsername.Substring(0, 2).ToUpper() : senderUsername.ToUpper(),
                             AvatarColor = "#8B949E",
                             UsernameColor = "#E6EDF3",
+                            AvatarUrl = string.IsNullOrEmpty(avatarUrl) ? null : avatarUrl,
                             Content = messageContent,
                             Timestamp = DateTime.Now.ToString("HH:mm"),
                             IsSystemMessage = false
@@ -473,7 +475,7 @@ namespace DevTavern.Client
                 // Trimitere live catre toti (SignalR)
                 if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
                 {
-                    await _hubConnection.InvokeAsync("SendLiveMessage", _username, text);
+                    await _hubConnection.InvokeAsync("SendLiveMessage", _instanceId, _username, text, _selectedChannelId, _avatarUrl ?? "");
                 }
             }
             catch { }
