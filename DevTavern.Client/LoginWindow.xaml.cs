@@ -105,6 +105,8 @@ namespace DevTavern.Client
             // Fetch GitHub user info
             string username = "user";
             string avatarUrl = "";
+            string githubId = "";
+            int currentUserId = 0;
             try
             {
                 using var client = new HttpClient();
@@ -114,10 +116,32 @@ namespace DevTavern.Client
                 var userJson = JObject.Parse(userResponse);
                 username = userJson["login"]?.ToString() ?? "user";
                 avatarUrl = userJson["avatar_url"]?.ToString() ?? "";
+                githubId = userJson["id"]?.ToString() ?? username;
+
+                // Cautam pe DB utilizatorul sau il adaugam
+                var usersResp = await _apiClient.GetStringAsync("users");
+                var usersArr = JArray.Parse(usersResp);
+                var existingUser = usersArr.FirstOrDefault(u => u["gitHubId"]?.ToString() == githubId);
+                
+                if (existingUser != null)
+                {
+                    currentUserId = existingUser["id"]?.ToObject<int>() ?? 0;
+                }
+                else
+                {
+                    var postData = new { GitHubId = githubId, Username = username, AvatarUrl = avatarUrl };
+                    var content = new StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
+                    var createResp = await _apiClient.PostAsync("users", content);
+                    if (createResp.IsSuccessStatusCode)
+                    {
+                        var newUserJson = JObject.Parse(await createResp.Content.ReadAsStringAsync());
+                        currentUserId = newUserJson["id"]?.ToObject<int>() ?? 0;
+                    }
+                }
             }
             catch { /* fallback to defaults */ }
 
-            var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl);
+            var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId);
             mainWindow.Show();
             this.Close();
         }
@@ -127,6 +151,7 @@ namespace DevTavern.Client
     {
         public string id { get; set; } = string.Empty;
         public string name { get; set; } = string.Empty;
+        public int DbId { get; set; }
         public bool isPrivate { get; set; }
         public bool isSelected { get; set; }
         public string IconLetters { get; set; } = "";

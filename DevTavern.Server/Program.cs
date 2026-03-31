@@ -46,7 +46,11 @@ builder.Services.AddAuthentication(options =>
     options.Scope.Add("user:email");
 });
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -65,7 +69,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// app.UseHttpsRedirection(); // Dezactivat — clientul WPF se conecteaza pe HTTP
 app.UseCors("AllowFrontendPolicy");
 app.UseAuthentication();
 app.UseAuthorization();

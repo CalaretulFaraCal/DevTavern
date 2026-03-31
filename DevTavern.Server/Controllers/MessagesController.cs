@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using DevTavern.Server.Models;
 using DevTavern.Server.Repositories;
+using DevTavern.Server.Data;
+using Microsoft.EntityFrameworkCore;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -13,22 +15,23 @@ namespace DevTavern.Server.Controllers
     public class MessagesController : ControllerBase
     {
         private readonly IRepository<Message> _messageRepository;
+        private readonly ApplicationDbContext _context;
 
-        public MessagesController(IRepository<Message> messageRepository)
+        public MessagesController(IRepository<Message> messageRepository, ApplicationDbContext context)
         {
             _messageRepository = messageRepository;
+            _context = context;
         }
 
         // GET /api/messages/channel/{channelId} - mesajele unui canal, ordonate cronologic
         [HttpGet("channel/{channelId}")]
         public async Task<ActionResult<IEnumerable<Message>>> GetMessagesForChannel(int channelId)
         {
-            var allMessages = await _messageRepository.GetAllAsync();
-            
-            var channelMessages = allMessages
+            var channelMessages = await _context.Messages
+                .Include(m => m.User)
                 .Where(m => m.ChannelId == channelId)
                 .OrderBy(m => m.SentAt)
-                .ToList();
+                .ToListAsync();
 
             return Ok(channelMessages);
         }
@@ -50,3 +53,4 @@ namespace DevTavern.Server.Controllers
         }
     }
 }
+
