@@ -13,9 +13,9 @@ namespace DevTavern.Server.Models
         public DateTime SentAt { get; set; } = DateTime.UtcNow;
 
         public int UserId { get; set; }
-        public User User { get; set; } = null!;
+        public User? User { get; set; }
 
         public int ChannelId { get; set; }
-        public Channel Channel { get; set; } = null!;
+        public Channel? Channel { get; set; }
     }
 }

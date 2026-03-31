@@ -19,7 +19,7 @@ namespace DevTavern.Server.Models
         public ChannelType Type { get; set; }
 
         public int ProjectId { get; set; }
-        public Project Project { get; set; } = null!;
+        public Project? Project { get; set; }
 
         public ICollection<Message> Messages { get; set; } = new List<Message>();
     }
