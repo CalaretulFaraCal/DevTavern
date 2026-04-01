@@ -137,7 +137,7 @@ namespace DevTavern.Client
                 await _hubConnection.StartAsync(); 
                 ChatSubtitle.Text = "Connected to Taverna Link";
             } 
-            catch (Exception ex)
+            catch
             {
                 ChatSubtitle.Text = "Offline Mode (Real-time sync disabled)";
             }
@@ -208,7 +208,7 @@ namespace DevTavern.Client
                 : name.ToUpper();
         }
 
-        private void ProjectList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private async void ProjectList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (ProjectList.SelectedItem is RepoItem selected)
             {
@@ -368,7 +368,7 @@ namespace DevTavern.Client
                     });
                 }
 
-                Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
+                await Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
                     System.Windows.Threading.DispatcherPriority.Background);
                 MessageInput.Focus();
             }
@@ -514,7 +514,7 @@ namespace DevTavern.Client
                 IsSystemMessage = false
             });
 
-            Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
+            await Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
                 System.Windows.Threading.DispatcherPriority.Background);
 
             MessageInput.Text = "";
