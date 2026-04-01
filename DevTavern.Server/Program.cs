@@ -8,9 +8,9 @@ using AspNet.Security.OAuth.GitHub;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Database — SQLite (fisierul devtavern.db va fi creat automat)
+// Database — PostgreSQL (Permanent History on Neon.tech)
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddHttpClient();
 builder.Services.AddSignalR();
