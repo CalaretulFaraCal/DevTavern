@@ -94,29 +94,40 @@ namespace DevTavern.Client
                 .WithUrl("https://devtavern.onrender.com/chat")
                 .Build();
 
-            // Primim mesaje live de la toti utilizatorii conectati
-            // Hub-ul trimite la ALL (inclusiv noi), deci ignoram propriile mesaje ca sa nu le duplicam
-            _hubConnection.On<string, string>("ReceiveMessage", (senderUsername, messageContent) =>
+            // Primim mesaje live doar pentru canalul in care suntem
+            _hubConnection.On<string, string, string>("ReceiveMessage", (senderUsername, senderAvatarUrl, messageContent) =>
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    // Ignoram mesajele trimise de noi (le-am afisat deja local in SendMessage)
                     if (senderUsername == _username) return;
 
-                    if (_selectedChannelId > 0)
+                    Messages.Add(new ChatMessage
                     {
-                        Messages.Add(new ChatMessage
+                        Username = senderUsername,
+                        Initials = senderUsername.Length >= 2 ? senderUsername.Substring(0, 2).ToUpper() : senderUsername.ToUpper(),
+                        AvatarColor = "#8B949E",
+                        UsernameColor = "#E6EDF3",
+                        AvatarUrl = string.IsNullOrEmpty(senderAvatarUrl) ? null : senderAvatarUrl,
+                        Content = messageContent,
+                        Timestamp = DateTime.Now.ToString("HH:mm"),
+                        IsSystemMessage = false
+                    });
+                    Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
+                        System.Windows.Threading.DispatcherPriority.Background);
+                });
+            });
+
+            // Primim notificare cand s-a creat un canal nou in tot proiectul
+            _hubConnection.On<int, string>("ChannelCreated", (channelId, channelName) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var channels))
+                    {
+                        if (!channels.Any(c => c.Id == channelId))
                         {
-                            Username = senderUsername,
-                            Initials = senderUsername.Length >= 2 ? senderUsername.Substring(0, 2).ToUpper() : senderUsername.ToUpper(),
-                            AvatarColor = "#8B949E",
-                            UsernameColor = "#E6EDF3",
-                            Content = messageContent,
-                            Timestamp = DateTime.Now.ToString("HH:mm"),
-                            IsSystemMessage = false
-                        });
-                        Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
-                            System.Windows.Threading.DispatcherPriority.Background);
+                            channels.Add(new ChannelItem { Id = channelId, Name = channelName });
+                        }
                     }
                 });
             });
@@ -124,11 +135,11 @@ namespace DevTavern.Client
             try 
             { 
                 await _hubConnection.StartAsync(); 
-                ChatSubtitle.Text = $"Connected to Taverna Link ✓";
+                ChatSubtitle.Text = "Connected to Taverna Link";
             } 
             catch (Exception ex)
             {
-                ChatSubtitle.Text = $"Offline Mode (Real-time sync disabled)";
+                ChatSubtitle.Text = "Offline Mode (Real-time sync disabled)";
             }
 
             // ---- Sync Projects & Channels with DB ----
@@ -201,8 +212,25 @@ namespace DevTavern.Client
         {
             if (ProjectList.SelectedItem is RepoItem selected)
             {
+                // ---- SignalR Join/Leave Project Group ----
+                string? oldProjectDbId = _projects.FirstOrDefault(p => p.name == _selectedProject)?.DbId.ToString();
+                string newProjectDbId = selected.DbId.ToString();
+
                 _selectedProject = selected.name;
                 SelectedProjectName.Text = selected.name;
+
+                try
+                {
+                    if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                    {
+                        if (oldProjectDbId != null)
+                        {
+                            await _hubConnection.InvokeAsync("LeaveProject", oldProjectDbId);
+                        }
+                        await _hubConnection.InvokeAsync("JoinProject", newProjectDbId);
+                    }
+                }
+                catch { }
 
                 ChannelsSectionHeader.Visibility = Visibility.Visible;
                 ChannelList.Visibility = Visibility.Visible;
@@ -438,6 +466,12 @@ namespace DevTavern.Client
                         };
                         channels.Add(newChannel);
                         ChannelList.SelectedItem = newChannel;
+
+                        // Notificam restul utilizatorilor care sunt in aceleasi proiect
+                        if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                        {
+                            await _hubConnection.InvokeAsync("NotifyChannelCreated", proj.DbId.ToString(), newChannel.Id, newChannel.Name);
+                        }
                     }
                 }
                 catch { }
@@ -496,7 +530,7 @@ namespace DevTavern.Client
                 // Trimitere live catre grupul canalului curent (SignalR)
                 if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
                 {
-                    await _hubConnection.InvokeAsync("SendLiveMessage", _selectedChannelId.ToString(), _username, text);
+                    await _hubConnection.InvokeAsync("SendLiveMessage", _selectedChannelId.ToString(), _username, _avatarUrl, text);
                 }
             }
             catch { }

@@ -18,10 +18,26 @@ namespace DevTavern.Server.Hubs
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Channel_{channelId}");
         }
 
-        // Trimite un mesaj live doar catre utilizatorii care sunt in acelasi grup (Canal)
-        public async Task SendLiveMessage(string channelId, string username, string messageContent)
+        // Metode pentru Proiecte (pentru a auzi cand se creeaza canale noi)
+        public async Task JoinProject(string projectId)
         {
-            await Clients.Group($"Channel_{channelId}").SendAsync("ReceiveMessage", username, messageContent);
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"Project_{projectId}");
+        }
+
+        public async Task LeaveProject(string projectId)
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Project_{projectId}");
+        }
+
+        public async Task NotifyChannelCreated(string projectId, int channelId, string channelName)
+        {
+            await Clients.Group($"Project_{projectId}").SendAsync("ChannelCreated", channelId, channelName);
+        }
+
+        // Trimite un mesaj live doar catre utilizatorii care sunt in acelasi grup (Canal)
+        public async Task SendLiveMessage(string channelId, string username, string avatarUrl, string messageContent)
+        {
+            await Clients.Group($"Channel_{channelId}").SendAsync("ReceiveMessage", username, avatarUrl, messageContent);
         }
     }
 }
