@@ -20,7 +20,7 @@ namespace DevTavern.Client
         public LoginWindow()
         {
             InitializeComponent();
-            _apiClient = new HttpClient { BaseAddress = new Uri("http://localhost:5114/api/") };
+            _apiClient = new HttpClient { BaseAddress = new Uri("https://devtavern.onrender.com/api/") };
             ReposList.ItemsSource = MyRepos;
         }
 

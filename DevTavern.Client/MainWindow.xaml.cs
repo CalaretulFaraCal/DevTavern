@@ -43,7 +43,7 @@ namespace DevTavern.Client
             InitializeComponent();
 
             _currentUserId = currentUserId;
-            _apiClient = new HttpClient { BaseAddress = new Uri("http://localhost:5114/api/") };
+            _apiClient = new HttpClient { BaseAddress = new Uri("https://devtavern.onrender.com/api/") };
 
             _accessToken = accessToken;
             _projects = projects;
@@ -91,7 +91,7 @@ namespace DevTavern.Client
         {
             // ---- SignalR Init ----
             _hubConnection = new HubConnectionBuilder()
-                .WithUrl("http://localhost:5114/chat")
+                .WithUrl("https://devtavern.onrender.com/chat")
                 .Build();
 
             // Primim mesaje live de la toti utilizatorii conectati

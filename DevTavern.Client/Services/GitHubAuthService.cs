@@ -63,7 +63,7 @@ namespace DevTavern.Client.Services
 
             var content = new StringContent(JsonConvert.SerializeObject(payload), System.Text.Encoding.UTF8, "application/json");
 
-            var response = await client.PostAsync("http://localhost:5114/api/auth/github-token", content);
+            var response = await client.PostAsync("https://devtavern.onrender.com/api/auth/github-token", content);
             
             if (!response.IsSuccessStatusCode)
             {
