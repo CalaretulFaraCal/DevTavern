@@ -8,9 +8,9 @@ using AspNet.Security.OAuth.GitHub;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Database
+// Database — SQLite (fisierul devtavern.db va fi creat automat)
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddHttpClient();
 builder.Services.AddSignalR();
