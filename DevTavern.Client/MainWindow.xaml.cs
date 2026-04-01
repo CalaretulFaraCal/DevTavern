@@ -121,7 +121,15 @@ namespace DevTavern.Client
                 });
             });
 
-            try { await _hubConnection.StartAsync(); } catch { }
+            try 
+            { 
+                await _hubConnection.StartAsync(); 
+                ChatSubtitle.Text = $"Connected to Taverna Link ✓";
+            } 
+            catch (Exception ex)
+            {
+                ChatSubtitle.Text = $"Offline Mode (Real-time sync disabled)";
+            }
 
             // ---- Sync Projects & Channels with DB ----
             foreach (var project in _projects)
@@ -250,7 +258,22 @@ namespace DevTavern.Client
         {
             if (ChannelList.SelectedItem is ChannelItem selectedChannel && _selectedProject != null)
             {
+                // ---- Leave old group and Join new group in SignalR ----
+                int oldChannelId = _selectedChannelId;
                 _selectedChannelId = selectedChannel.Id;
+
+                try
+                {
+                    if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                    {
+                        if (oldChannelId > 0)
+                        {
+                            await _hubConnection.InvokeAsync("LeaveChannel", oldChannelId.ToString());
+                        }
+                        await _hubConnection.InvokeAsync("JoinChannel", _selectedChannelId.ToString());
+                    }
+                }
+                catch { }
 
                 ChatTitle.Text = selectedChannel.Name;
                 ChatSubtitle.Text = $"{_selectedProject} · #{selectedChannel.Name}";
@@ -470,10 +493,10 @@ namespace DevTavern.Client
                 var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
                 await _apiClient.PostAsync("messages", content);
 
-                // Trimitere live catre toti (SignalR)
+                // Trimitere live catre grupul canalului curent (SignalR)
                 if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
                 {
-                    await _hubConnection.InvokeAsync("SendLiveMessage", _username, text);
+                    await _hubConnection.InvokeAsync("SendLiveMessage", _selectedChannelId.ToString(), _username, text);
                 }
             }
             catch { }

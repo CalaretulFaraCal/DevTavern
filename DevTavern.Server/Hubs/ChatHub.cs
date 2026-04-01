@@ -6,10 +6,22 @@ namespace DevTavern.Server.Hubs
     // SignalR Hub - comunicare in timp real intre utilizatori
     public class ChatHub : Hub
     {
-        // Trimite un mesaj live catre toti utilizatorii conectati
-        public async Task SendLiveMessage(string username, string messageContent)
+        // Alatura utilizatorul unui grup specific (Canalul selectat)
+        public async Task JoinChannel(string channelId)
         {
-            await Clients.All.SendAsync("ReceiveMessage", username, messageContent);
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"Channel_{channelId}");
+        }
+
+        // Paraseste un grup anterior (pentru a nu ramane conectat la canale vechi)
+        public async Task LeaveChannel(string channelId)
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Channel_{channelId}");
+        }
+
+        // Trimite un mesaj live doar catre utilizatorii care sunt in acelasi grup (Canal)
+        public async Task SendLiveMessage(string channelId, string username, string messageContent)
+        {
+            await Clients.Group($"Channel_{channelId}").SendAsync("ReceiveMessage", username, messageContent);
         }
     }
 }
