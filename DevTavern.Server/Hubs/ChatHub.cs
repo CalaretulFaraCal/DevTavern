@@ -7,9 +7,9 @@ namespace DevTavern.Server.Hubs
     public class ChatHub : Hub
     {
         // Trimite un mesaj live catre toti utilizatorii conectati
-        public async Task SendLiveMessage(string senderInstanceId, string username, string messageContent, int channelId, string avatarUrl)
+        public async Task SendLiveMessage(string username, string messageContent)
         {
-            await Clients.All.SendAsync("ReceiveMessage", senderInstanceId, username, messageContent, channelId, avatarUrl);
+            await Clients.All.SendAsync("ReceiveMessage", username, messageContent);
         }
     }
 }
