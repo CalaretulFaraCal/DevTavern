@@ -65,6 +65,8 @@ namespace DevTavern.Client
                 {
                     id = repo["id"]?.ToString() ?? string.Empty,
                     name = repo["name"]?.ToString() ?? string.Empty,
+                    fullName = repo["fullName"]?.ToString() ?? string.Empty,
+                    owner = repo["owner"]?.ToString() ?? string.Empty,
                     isPrivate = repo["isPrivate"]?.ToObject<bool>() ?? false,
                     isSelected = true
                 });
@@ -151,10 +153,12 @@ namespace DevTavern.Client
     {
         public string id { get; set; } = string.Empty;
         public string name { get; set; } = string.Empty;
+        public string fullName { get; set; } = string.Empty;
+        public string owner { get; set; } = string.Empty;
         public int DbId { get; set; }
         public bool isPrivate { get; set; }
         public bool isSelected { get; set; }
         public string IconLetters { get; set; } = "";
-        public string VisibilityLabel => isPrivate ? "🔒 Private" : "🌐 Public";
+        public string VisibilityLabel => isPrivate ? "Private" : "Public";
     }
 }

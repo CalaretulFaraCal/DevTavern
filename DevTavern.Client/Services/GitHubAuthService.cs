@@ -29,7 +29,7 @@ namespace DevTavern.Client.Services
             listener.Prefixes.Add(RedirectUri);
             listener.Start();
 
-            string authUrl = $"https://github.com/login/oauth/authorize?client_id={ClientId}&redirect_uri={RedirectUri}&scope=repo user:email";
+            string authUrl = $"https://github.com/login/oauth/authorize?client_id={ClientId}&redirect_uri={RedirectUri}&scope=repo user:email&prompt=consent&login=";
             Process.Start(new ProcessStartInfo(authUrl) { UseShellExecute = true });
 
             var context = await listener.GetContextAsync();
@@ -83,6 +83,17 @@ namespace DevTavern.Client.Services
             }
 
             return accessToken ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Sterge token-ul salvat local — forteaza re-autentificare la urmatorul login.
+        /// </summary>
+        public static void ClearTokenCache()
+        {
+            if (File.Exists(TokenFilePath))
+            {
+                File.Delete(TokenFilePath);
+            }
         }
     }
 }

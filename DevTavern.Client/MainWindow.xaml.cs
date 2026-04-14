@@ -29,6 +29,7 @@ namespace DevTavern.Client
         private string? _selectedProject;
         private int _selectedChannelId;
         private bool _membersPanelVisible = false;
+        private ChannelItem? _editingChannel = null;
 
         // Channels per project: projectName -> list of channels
         private readonly Dictionary<string, ObservableCollection<ChannelItem>> _projectChannels = new();
@@ -175,18 +176,66 @@ namespace DevTavern.Client
                         }
                     }
 
-                    // Members — initializare locala (serverul nu are un endpoint dedicat pentru membri)
-                    _projectMembers[project.name] = new ObservableCollection<MemberItem>
+                    // Members — fetch collaborators from GitHub API
+                    _projectMembers[project.name] = new ObservableCollection<MemberItem>();
+                    try
                     {
-                        new MemberItem
+                        using var ghClient = new HttpClient();
+                        ghClient.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                        ghClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+
+                        // GitHub API: GET /repos/{owner}/{repo}/collaborators
+                        var collabResp = await ghClient.GetAsync($"https://api.github.com/repos/{project.fullName}/collaborators");
+                        
+                        if (!collabResp.IsSuccessStatusCode)
+                        {
+                            // Daca nu merge collaborators (403 pt non-admin), incercam contributors
+                            collabResp = await ghClient.GetAsync($"https://api.github.com/repos/{project.fullName}/contributors");
+                        }
+
+                        if (collabResp.IsSuccessStatusCode)
+                        {
+                            var collabJson = JArray.Parse(await collabResp.Content.ReadAsStringAsync());
+                            foreach (var collab in collabJson)
+                            {
+                                string memberUsername = collab["login"]?.ToString() ?? "";
+                                string memberAvatar = collab["avatar_url"]?.ToString() ?? "";
+                                if (string.IsNullOrEmpty(memberUsername)) continue;
+
+                                string role = memberUsername == _username ? "You" : "Collaborator";
+
+                                // Verificam daca user-ul are permisiuni admin/owner
+                                var permissions = collab["permissions"];
+                                if (permissions != null && permissions["admin"]?.ToObject<bool>() == true)
+                                {
+                                    role = memberUsername == _username ? "Owner (You)" : "Owner";
+                                }
+
+                                _projectMembers[project.name].Add(new MemberItem
+                                {
+                                    Username = memberUsername,
+                                    Initials = memberUsername.Length >= 2 ? memberUsername.Substring(0, 2).ToUpper() : memberUsername.ToUpper(),
+                                    Role = role,
+                                    IsOnline = memberUsername == _username,
+                                    AvatarUrl = memberAvatar
+                                });
+                            }
+                        }
+                    }
+                    catch { }
+
+                    // Daca lista e goala (eroare API), adaugam cel putin utilizatorul curent
+                    if (_projectMembers[project.name].Count == 0)
+                    {
+                        _projectMembers[project.name].Add(new MemberItem
                         {
                             Username = _username,
                             Initials = UserInitials.Text,
                             Role = "Owner",
                             IsOnline = true,
                             AvatarUrl = _avatarUrl
-                        }
-                    };
+                        });
+                    }
                 }
                 catch { }
             }
@@ -534,6 +583,186 @@ namespace DevTavern.Client
                 }
             }
             catch { }
+        }
+
+        // ========== Channel Settings Handlers ==========
+
+        private void ChannelSettingsBtn_Click(object sender, RoutedEventArgs e)
+        {
+            // The gear button is inside the ListBoxItem ControlTemplate,
+            // so we walk up the visual tree to find the ListBoxItem and get its DataContext.
+            if (sender is Button btn)
+            {
+                var listBoxItem = FindParent<ListBoxItem>(btn);
+                if (listBoxItem?.DataContext is ChannelItem channel)
+                {
+                    _editingChannel = channel;
+                    SettingsChannelTitle.Text = channel.Name;
+                    EditChannelNameInput.Text = channel.Name;
+
+                    // Reset to Overview tab
+                    OverviewTabContent.Visibility = Visibility.Visible;
+                    PermissionsTabContent.Visibility = Visibility.Collapsed;
+
+                    ChannelSettingsOverlay.Visibility = Visibility.Visible;
+                    EditChannelNameInput.Focus();
+                    EditChannelNameInput.SelectAll();
+                }
+            }
+
+            e.Handled = true; // Prevent channel selection from changing
+        }
+
+        private static T? FindParent<T>(System.Windows.DependencyObject child) where T : System.Windows.DependencyObject
+        {
+            var parent = VisualTreeHelper.GetParent(child);
+            while (parent != null && parent is not T)
+            {
+                parent = VisualTreeHelper.GetParent(parent);
+            }
+            return parent as T;
+        }
+
+        private void CloseChannelSettings_Click(object sender, RoutedEventArgs e)
+        {
+            ChannelSettingsOverlay.Visibility = Visibility.Collapsed;
+            _editingChannel = null;
+        }
+
+        private void ChannelSettingsOverlay_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            ChannelSettingsOverlay.Visibility = Visibility.Collapsed;
+            _editingChannel = null;
+        }
+
+        private void TabOverview_Click(object sender, RoutedEventArgs e)
+        {
+            OverviewTabContent.Visibility = Visibility.Visible;
+            PermissionsTabContent.Visibility = Visibility.Collapsed;
+        }
+
+        private void TabPermissions_Click(object sender, RoutedEventArgs e)
+        {
+            OverviewTabContent.Visibility = Visibility.Collapsed;
+            PermissionsTabContent.Visibility = Visibility.Visible;
+        }
+
+        // Redenumeste canalul (doar local)
+        private void SaveChannelName_Click(object sender, RoutedEventArgs e)
+        {
+            if (_editingChannel == null) return;
+
+            var newName = EditChannelNameInput.Text?.Trim().ToLower().Replace(" ", "-");
+            if (string.IsNullOrEmpty(newName)) return;
+
+            if (newName == _editingChannel.Name)
+            {
+                ChannelSettingsOverlay.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            // Check if name already exists in project
+            if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var channels))
+            {
+                if (channels.Any(c => c.Name == newName && c.Id != _editingChannel.Id))
+                {
+                    MessageBox.Show("A channel with this name already exists.", "DevTavern",
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+            }
+
+            // Update local state
+            _editingChannel.Name = newName;
+
+            // Refresh the channel list UI
+            if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var ch))
+            {
+                ChannelList.ItemsSource = null;
+                ChannelList.ItemsSource = ch;
+            }
+
+            // Update chat header if this is the currently selected channel
+            if (_selectedChannelId == _editingChannel.Id)
+            {
+                ChatTitle.Text = newName;
+                ChatSubtitle.Text = $"{_selectedProject} · #{newName}";
+            }
+
+            SettingsChannelTitle.Text = newName;
+        }
+
+        // Sterge canalul (doar local) — arata dialog custom de confirmare
+        private void DeleteChannel_Click(object sender, RoutedEventArgs e)
+        {
+            if (_editingChannel == null || _selectedProject == null) return;
+
+            DeleteConfirmMessage.Text = $"Are you sure you want to delete #{_editingChannel.Name}?\nThis action cannot be undone and all messages will be lost.";
+            DeleteConfirmOverlay.Visibility = Visibility.Visible;
+        }
+
+        private void DeleteConfirmCancel_Click(object sender, RoutedEventArgs e)
+        {
+            DeleteConfirmOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private void DeleteConfirmOverlay_BackdropClick(object sender, MouseButtonEventArgs e)
+        {
+            DeleteConfirmOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private void DeleteConfirmYes_Click(object sender, RoutedEventArgs e)
+        {
+            DeleteConfirmOverlay.Visibility = Visibility.Collapsed;
+
+            if (_editingChannel == null || _selectedProject == null) return;
+
+            // Remove from local collection
+            if (_projectChannels.TryGetValue(_selectedProject, out var channels))
+            {
+                channels.Remove(_editingChannel);
+
+                // If we deleted the currently selected channel, switch to first available
+                if (_selectedChannelId == _editingChannel.Id)
+                {
+                    if (channels.Count > 0)
+                    {
+                        ChannelList.SelectedIndex = 0;
+                    }
+                    else
+                    {
+                        Messages.Clear();
+                        ChatTitle.Text = "No channels";
+                        ChatSubtitle.Text = "Create a channel to start chatting";
+                    }
+                }
+            }
+
+            ChannelSettingsOverlay.Visibility = Visibility.Collapsed;
+            _editingChannel = null;
+        }
+
+        // ========== Logout ==========
+
+        private async void LogoutButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Disconnect SignalR
+            if (_hubConnection != null)
+            {
+                try { await _hubConnection.StopAsync(); } catch { }
+                await _hubConnection.DisposeAsync();
+                _hubConnection = null;
+            }
+
+            // Stergem token-ul salvat local pentru a forta re-autentificarea
+            Services.GitHubAuthService.ClearTokenCache();
+
+            // Open a fresh login window
+            var loginWindow = new LoginWindow();
+            loginWindow.Show();
+
+            // Close this window
+            this.Close();
         }
     }
 
