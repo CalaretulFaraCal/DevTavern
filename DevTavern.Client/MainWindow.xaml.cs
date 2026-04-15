@@ -111,7 +111,8 @@ namespace DevTavern.Client
                         AvatarUrl = string.IsNullOrEmpty(senderAvatarUrl) ? null : senderAvatarUrl,
                         Content = messageContent,
                         Timestamp = DateTime.Now.ToString("HH:mm"),
-                        IsSystemMessage = false
+                        IsSystemMessage = false,
+                        IsMentioningMe = messageContent.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
                     });
                     Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
                         System.Windows.Threading.DispatcherPriority.Background);
@@ -295,12 +296,84 @@ namespace DevTavern.Client
 
                 if (_projectMembers.TryGetValue(selected.name, out var members))
                 {
-                    MembersList.ItemsSource = members;
+                    RefreshMembersList();
                 }
 
                 HomeView.Visibility = Visibility.Collapsed;
                 ChatView.Visibility = Visibility.Visible;
             }
+        }
+
+        private void RefreshMembersList()
+        {
+            if (string.IsNullOrEmpty(_selectedProject) || !_projectMembers.TryGetValue(_selectedProject, out var baseMembers))
+            {
+                MembersList.ItemsSource = null;
+                return;
+            }
+
+            // Define highest priority hierarchy (top to bottom)
+            var hierarchy = new List<string> 
+            { 
+                "Project Manager", 
+                "DevOps", 
+                "Fullstack Developer", 
+                "Backend Developer", 
+                "Frontend Developer", 
+                "UI/UX Designer", 
+                "QA / Tester" 
+            };
+
+            var groupedList = new ObservableCollection<MemberItem>();
+            var memberRoles = new Dictionary<MemberItem, string>();
+
+            // 1. Assign each member their primary role
+            foreach (var m in baseMembers)
+            {
+                if (m.IsHeader) continue; // safety check
+
+                string primaryRole = "ONLINE";
+                if (m.DevRoles != null && m.DevRoles.Count > 0)
+                {
+                    foreach (var h in hierarchy)
+                    {
+                        if (m.DevRoles.Contains(h)) { primaryRole = h; break; }
+                    }
+                }
+                
+                // Hide 'Collaborator' / 'You' by overwriting the visual title with their DevRole or 'Member'
+                m.Role = primaryRole == "ONLINE" ? "Member" : primaryRole;
+                memberRoles[m] = primaryRole;
+            }
+
+            // 2. Build the visual list inserting Header objects
+            var allCategories = hierarchy.ToList();
+            allCategories.Add("ONLINE");
+
+            foreach (var cat in allCategories)
+            {
+                var membersInCat = baseMembers.Where(m => !m.IsHeader && memberRoles.ContainsKey(m) && memberRoles[m] == cat)
+                                              .OrderBy(m => m.Username).ToList();
+
+                if (membersInCat.Count > 0)
+                {
+                    // Add Category Header
+                    groupedList.Add(new MemberItem
+                    {
+                        Username = $"{cat.ToUpper()} — {membersInCat.Count}",
+                        IsHeader = true
+                    });
+
+                    // Add Members
+                    foreach (var m in membersInCat)
+                    {
+                        groupedList.Add(m);
+                    }
+                }
+            }
+
+            MembersList.ItemsSource = null;
+            MembersList.ItemsSource = groupedList;
         }
 
         private void HomeButton_Click(object sender, MouseButtonEventArgs e)
@@ -401,7 +474,8 @@ namespace DevTavern.Client
                             AvatarUrl = string.IsNullOrEmpty(msgAvatarUrl) ? null : msgAvatarUrl,
                             Content = content,
                             Timestamp = time,
-                            IsSystemMessage = false
+                            IsSystemMessage = false,
+                            IsMentioningMe = content.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
                         });
                     }
                 }
@@ -534,8 +608,130 @@ namespace DevTavern.Client
             SendMessage();
         }
 
+        // ========== @Mention Autocomplete ==========
+
+        private bool _isMentioning = false;
+        private int _mentionStartIndex = -1;
+
+        private void MessageInput_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            var text = MessageInput.Text ?? "";
+            var caretIndex = MessageInput.CaretIndex;
+
+            // Find the @ character before the caret
+            int atIndex = -1;
+            for (int i = caretIndex - 1; i >= 0; i--)
+            {
+                if (text[i] == '@')
+                {
+                    atIndex = i;
+                    break;
+                }
+                if (text[i] == ' ') break; // stop at space
+            }
+
+            if (atIndex >= 0)
+            {
+                string query = text.Substring(atIndex + 1, caretIndex - atIndex - 1).ToLower();
+                _isMentioning = true;
+                _mentionStartIndex = atIndex;
+
+                // Filter members matching the query
+                if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
+                {
+                    var filtered = members.Where(m => m.Username.ToLower().Contains(query)).ToList();
+                    if (filtered.Count > 0)
+                    {
+                        MentionPopup.ItemsSource = filtered;
+                        MentionPopup.SelectedIndex = 0;
+                        MentionPopup.Visibility = Visibility.Visible;
+                        return;
+                    }
+                }
+            }
+
+            _isMentioning = false;
+            _mentionStartIndex = -1;
+            MentionPopup.Visibility = Visibility.Collapsed;
+        }
+
+        private void MentionPopup_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            // Triggered by click
+            if (MentionPopup.SelectedItem is MemberItem member && _isMentioning && System.Windows.Input.Mouse.LeftButton == System.Windows.Input.MouseButtonState.Pressed)
+            {
+                InsertMention(member.Username);
+            }
+        }
+
+        private void MentionPopup_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter || e.Key == Key.Tab)
+            {
+                if (MentionPopup.SelectedItem is MemberItem member)
+                {
+                    InsertMention(member.Username);
+                    e.Handled = true;
+                }
+            }
+            else if (e.Key == Key.Escape)
+            {
+                MentionPopup.Visibility = Visibility.Collapsed;
+                _isMentioning = false;
+                MessageInput.Focus();
+                e.Handled = true;
+            }
+        }
+
+        private void InsertMention(string username)
+        {
+            var text = MessageInput.Text ?? "";
+            if (_mentionStartIndex < 0 || _mentionStartIndex >= text.Length) return;
+
+            var caretIndex = MessageInput.CaretIndex;
+            string before = text.Substring(0, _mentionStartIndex);
+            string after = caretIndex < text.Length ? text.Substring(caretIndex) : "";
+            string newText = before + "@" + username + " " + after;
+
+            MessageInput.Text = newText;
+            MessageInput.CaretIndex = before.Length + 1 + username.Length + 1;
+
+            _isMentioning = false;
+            _mentionStartIndex = -1;
+            MentionPopup.Visibility = Visibility.Collapsed;
+            MessageInput.Focus();
+        }
+
         private void MessageInput_KeyDown(object sender, KeyEventArgs e)
         {
+            if (_isMentioning && MentionPopup.Visibility == Visibility.Visible)
+            {
+                if (e.Key == Key.Down)
+                {
+                    if (MentionPopup.SelectedIndex < MentionPopup.Items.Count - 1) MentionPopup.SelectedIndex++;
+                    e.Handled = true; return;
+                }
+                else if (e.Key == Key.Up)
+                {
+                    if (MentionPopup.SelectedIndex > 0) MentionPopup.SelectedIndex--;
+                    e.Handled = true; return;
+                }
+                else if (e.Key == Key.Tab || e.Key == Key.Enter)
+                {
+                    if (MentionPopup.SelectedItem is MemberItem member)
+                    {
+                        InsertMention(member.Username);
+                        e.Handled = true; return;
+                    }
+                }
+                else if (e.Key == Key.Escape)
+                {
+                    MentionPopup.Visibility = Visibility.Collapsed;
+                    _isMentioning = false;
+                    e.Handled = true; return;
+                }
+            }
+
             if (e.Key == Key.Enter)
             {
                 SendMessage();
@@ -560,7 +756,8 @@ namespace DevTavern.Client
                 AvatarUrl = string.IsNullOrEmpty(_avatarUrl) ? null : _avatarUrl,
                 Content = text,
                 Timestamp = DateTime.Now.ToString("HH:mm"),
-                IsSystemMessage = false
+                IsSystemMessage = false,
+                IsMentioningMe = text.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
             });
 
             await Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
@@ -764,8 +961,251 @@ namespace DevTavern.Client
             // Close this window
             this.Close();
         }
-    }
+        
+        // ========== Set Roles Overlay ==========
 
+        private void SetRoleButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Reset checkboxes
+            foreach (UIElement child in RoleCheckboxesContainer.Children)
+            {
+                if (child is System.Windows.Controls.CheckBox cb)
+                {
+                    cb.IsChecked = false;
+                }
+            }
+            
+            // Check the ones the user already has
+            if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
+            {
+                var me = members.FirstOrDefault(m => m.Username == _username);
+                if (me != null && me.DevRoles != null)
+                {
+                    foreach (UIElement child in RoleCheckboxesContainer.Children)
+                    {
+                        if (child is System.Windows.Controls.CheckBox cb && cb.Content is string cbText)
+                        {
+                            if (me.DevRoles.Contains(cbText)) cb.IsChecked = true;
+                        }
+                    }
+                }
+            }
+
+            RoleSelectionOverlay.Visibility = Visibility.Visible;
+        }
+
+        private void RoleSelectionOverlay_BackdropClick(object sender, MouseButtonEventArgs e)
+        {
+            RoleSelectionOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private void SaveRoles_Click(object sender, RoutedEventArgs e)
+        {
+            RoleSelectionOverlay.Visibility = Visibility.Collapsed;
+
+            if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
+            {
+                var me = members.FirstOrDefault(m => m.Username == _username);
+                if (me != null)
+                {
+                    me.DevRoles.Clear();
+                    foreach (UIElement child in RoleCheckboxesContainer.Children)
+                    {
+                        if (child is System.Windows.Controls.CheckBox cb && cb.IsChecked == true && cb.Content is string cbText)
+                        {
+                            me.DevRoles.Add(cbText);
+                        }
+                    }
+
+                    // Refresh binding for members list
+                    RefreshMembersList();
+                }
+            }
+        }
+
+        // ========== Import Projects Overlay ==========
+
+        public ObservableCollection<RepoItem> ImportableRepos { get; set; } = new ObservableCollection<RepoItem>();
+
+        private async void AddProjectButton_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            ImportProjectsOverlay.Visibility = Visibility.Visible;
+            ImportStatusText.Text = "Loading your GitHub repositories...";
+            ImportableRepos.Clear();
+            ImportProjectsList.ItemsSource = ImportableRepos;
+
+            try
+            {
+                var response = await _apiClient.GetStringAsync($"projects/github/my-projects?githubPersonalAccessToken={_accessToken}");
+                var jsonArray = Newtonsoft.Json.Linq.JArray.Parse(response);
+
+                var currentRepoIds = new HashSet<string>();
+                foreach (var p in _projects) currentRepoIds.Add(p.id);
+
+                foreach (var repo in jsonArray)
+                {
+                    string id = repo["id"]?.ToString() ?? "";
+                    if (!currentRepoIds.Contains(id))
+                    {
+                        ImportableRepos.Add(new RepoItem
+                        {
+                            id = id,
+                            name = repo["name"]?.ToString() ?? "",
+                            fullName = repo["fullName"]?.ToString() ?? "",
+                            owner = repo["owner"]?.ToString() ?? "",
+                            isPrivate = repo["isPrivate"]?.ToObject<bool>() ?? false,
+                            isSelected = false
+                        });
+                    }
+                }
+
+                if (ImportableRepos.Count == 0)
+                {
+                    ImportStatusText.Text = "No new repositories to import.";
+                }
+                else
+                {
+                    ImportStatusText.Text = "Select projects to import to DevTavern.";
+                }
+            }
+            catch (Exception ex)
+            {
+                ImportStatusText.Text = $"Error: {ex.Message}";
+            }
+        }
+
+        private void ImportProjectsOverlay_BackdropClick(object sender, MouseButtonEventArgs e)
+        {
+            ImportProjectsOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private void ImportSelectAll_Click(object sender, RoutedEventArgs e)
+        {
+            bool anyUnselected = ImportableRepos.Any(r => !r.isSelected);
+            foreach (var r in ImportableRepos) r.isSelected = anyUnselected;
+            
+            ImportProjectsList.ItemsSource = null;
+            ImportProjectsList.ItemsSource = ImportableRepos;
+        }
+
+        private async void ConfirmImport_Click(object sender, RoutedEventArgs e)
+        {
+            var newSelectedRepos = ImportableRepos.Where(r => r.isSelected).ToList();
+            if (newSelectedRepos.Count == 0)
+            {
+                ImportProjectsOverlay.Visibility = Visibility.Collapsed;
+                return;
+            }
+            
+            ImportStatusText.Text = "Importing and syncing...";
+            
+            foreach (var r in newSelectedRepos)
+            {
+                r.IconLetters = GenerateIconLetters(r.name);
+                _projects.Add(r);
+            }
+
+            // Sync with DB just for the newly appended projects
+            foreach (var project in newSelectedRepos)
+            {
+                try
+                {
+                    var pData = new { GitHubRepoId = project.id, Name = project.name };
+                    var pContent = new StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(pData), System.Text.Encoding.UTF8, "application/json");
+                    var pResp = await _apiClient.PostAsync("projects", pContent);
+                    if (pResp.IsSuccessStatusCode)
+                    {
+                        var pJson = Newtonsoft.Json.Linq.JObject.Parse(await pResp.Content.ReadAsStringAsync());
+                        project.DbId = pJson["id"]?.ToObject<int>() ?? 0;
+
+                        var cResp = await _apiClient.PostAsync($"channels/generate-defaults/{project.DbId}", null);
+                        if (cResp.IsSuccessStatusCode)
+                        {
+                            var cArr = Newtonsoft.Json.Linq.JArray.Parse(await cResp.Content.ReadAsStringAsync());
+                            var channelsList = new ObservableCollection<ChannelItem>();
+                            foreach (var c in cArr)
+                            {
+                                channelsList.Add(new ChannelItem
+                                {
+                                    Id = c["id"]?.ToObject<int>() ?? 0,
+                                    Name = c["name"]?.ToString() ?? ""
+                                });
+                            }
+                            _projectChannels[project.name] = channelsList;
+                        }
+                    }
+
+                    _projectMembers[project.name] = new ObservableCollection<MemberItem>();
+                    try
+                    {
+                        using var ghClient = new HttpClient();
+                        ghClient.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                        ghClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+
+                        var collabResp = await ghClient.GetAsync($"https://api.github.com/repos/{project.fullName}/collaborators");
+                        if (!collabResp.IsSuccessStatusCode)
+                        {
+                            collabResp = await ghClient.GetAsync($"https://api.github.com/repos/{project.fullName}/contributors");
+                        }
+
+                        if (collabResp.IsSuccessStatusCode)
+                        {
+                            var collabJson = Newtonsoft.Json.Linq.JArray.Parse(await collabResp.Content.ReadAsStringAsync());
+                            foreach (var collab in collabJson)
+                            {
+                                string memberUsername = collab["login"]?.ToString() ?? "";
+                                string memberAvatar = collab["avatar_url"]?.ToString() ?? "";
+                                if (string.IsNullOrEmpty(memberUsername)) continue;
+
+                                string role = memberUsername == _username ? "You" : "Collaborator";
+                                var permissions = collab["permissions"];
+                                if (permissions != null && permissions["admin"]?.ToObject<bool>() == true)
+                                {
+                                    role = memberUsername == _username ? "Owner (You)" : "Owner";
+                                }
+
+                                _projectMembers[project.name].Add(new MemberItem
+                                {
+                                    Username = memberUsername,
+                                    Initials = memberUsername.Length >= 2 ? memberUsername.Substring(0, 2).ToUpper() : memberUsername.ToUpper(),
+                                    Role = role,
+                                    IsOnline = memberUsername == _username,
+                                    AvatarUrl = memberAvatar
+                                });
+                            }
+                        }
+                    }
+                    catch { }
+
+                    if (_projectMembers[project.name].Count == 0)
+                    {
+                        _projectMembers[project.name].Add(new MemberItem
+                        {
+                            Username = _username,
+                            Initials = UserInitials.Text,
+                            Role = "Owner",
+                            IsOnline = true,
+                            AvatarUrl = _avatarUrl
+                        });
+                    }
+                }
+                catch { }
+            }
+
+            // Refresh ProjectList in the sidebar so new icons show up
+            ProjectList.ItemsSource = null;
+            ProjectList.ItemsSource = _projects;
+
+            // Add newly imported projects to the cache for auto-login skips
+            try
+            {
+                System.IO.File.WriteAllText("installed_projects.cache", JsonConvert.SerializeObject(_projects));
+            }
+            catch { }
+
+            ImportProjectsOverlay.Visibility = Visibility.Collapsed;
+        }
+    }
     public class ChatMessage
     {
         public string Username { get; set; } = "";
@@ -777,6 +1217,7 @@ namespace DevTavern.Client
         public string Timestamp { get; set; } = "";
         public bool IsSystemMessage { get; set; } = false;
         public bool HasAvatar => !string.IsNullOrEmpty(AvatarUrl);
+        public bool IsMentioningMe { get; set; } = false;
     }
 
     public class ChannelItem
@@ -793,5 +1234,10 @@ namespace DevTavern.Client
         public bool IsOnline { get; set; } = false;
         public string? AvatarUrl { get; set; } = null;
         public bool HasAvatar => !string.IsNullOrEmpty(AvatarUrl);
+        public bool IsHeader { get; set; } = false;
+        
+        public List<string> DevRoles { get; set; } = new List<string>();
+        public string RoleBadges => DevRoles != null && DevRoles.Count > 0 ? string.Join(" · ", DevRoles) : "";
+        public bool HasDevRoles => DevRoles != null && DevRoles.Count > 0;
     }
 }

@@ -7,6 +7,9 @@ using System.Windows;
 using System.Windows.Input;
 using DevTavern.Client.Services;
 using Newtonsoft.Json.Linq;
+using Newtonsoft.Json;
+using System.IO;
+using System.Linq;
 
 namespace DevTavern.Client
 {
@@ -22,6 +25,73 @@ namespace DevTavern.Client
             InitializeComponent();
             _apiClient = new HttpClient { BaseAddress = new Uri("https://devtavern.onrender.com/api/") };
             ReposList.ItemsSource = MyRepos;
+            this.Loaded += LoginWindow_Loaded;
+        }
+
+        private async void LoginWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            // Auto-login skip feature
+            var tokenPath = "github_token.cache";
+            var projectsPath = "installed_projects.cache";
+
+            if (File.Exists(tokenPath) && File.Exists(projectsPath))
+            {
+                StatusText.Text = "Auto-logging in...";
+                LoginButton.IsEnabled = false;
+                try
+                {
+                    _accessToken = await File.ReadAllTextAsync(tokenPath);
+                    var cachedProjectsJson = await File.ReadAllTextAsync(projectsPath);
+                    var selectedRepos = JsonConvert.DeserializeObject<List<RepoItem>>(cachedProjectsJson) ?? new List<RepoItem>();
+
+                    // Fetch user details silently
+                    string username = "user";
+                    string avatarUrl = "";
+                    string githubId = "";
+                    int currentUserId = 0;
+
+                    using var client = new HttpClient();
+                    client.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                    client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+                    var userResponse = await client.GetStringAsync("https://api.github.com/user");
+                    var userJson = JObject.Parse(userResponse);
+                    username = userJson["login"]?.ToString() ?? "user";
+                    avatarUrl = userJson["avatar_url"]?.ToString() ?? "";
+                    githubId = userJson["id"]?.ToString() ?? username;
+
+                    // Sync user with DB
+                    var usersResp = await _apiClient.GetStringAsync("users");
+                    var usersArr = JArray.Parse(usersResp);
+                    var existingUser = usersArr.FirstOrDefault(u => u["gitHubId"]?.ToString() == githubId);
+                    
+                    if (existingUser != null)
+                    {
+                        currentUserId = existingUser["id"]?.ToObject<int>() ?? 0;
+                    }
+                    else
+                    {
+                        var postData = new { GitHubId = githubId, Username = username, AvatarUrl = avatarUrl };
+                        var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
+                        var createResp = await _apiClient.PostAsync("users", content);
+                        if (createResp.IsSuccessStatusCode)
+                        {
+                            var newUserJson = JObject.Parse(await createResp.Content.ReadAsStringAsync());
+                            currentUserId = newUserJson["id"]?.ToObject<int>() ?? 0;
+                        }
+                    }
+
+                    // Perform skip
+                    var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId);
+                    mainWindow.Show();
+                    this.Close();
+                }
+                catch
+                {
+                    // If silent login fails (e.g. token expired, no internet), fallback to main screen
+                    StatusText.Text = "Auto-login failed. Please sign in.";
+                    LoginButton.IsEnabled = true;
+                }
+            }
         }
 
         private void DragWindow(object sender, MouseButtonEventArgs e)
@@ -142,6 +212,13 @@ namespace DevTavern.Client
                 }
             }
             catch { /* fallback to defaults */ }
+
+            // Save to local cache for auto-login
+            try
+            {
+                File.WriteAllText("installed_projects.cache", JsonConvert.SerializeObject(selectedRepos));
+            }
+            catch { }
 
             var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId);
             mainWindow.Show();
