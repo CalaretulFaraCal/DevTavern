@@ -134,6 +134,32 @@ namespace DevTavern.Client
                 });
             });
 
+            // Primim notificare cand un canal este sters
+            _hubConnection.On<int>("ChannelDeleted", (channelId) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var channels))
+                    {
+                        var chToRemove = channels.FirstOrDefault(c => c.Id == channelId);
+                        if (chToRemove != null)
+                        {
+                            channels.Remove(chToRemove);
+                            if (_selectedChannelId == channelId)
+                            {
+                                if (channels.Count > 0) ChannelList.SelectedIndex = 0;
+                                else
+                                {
+                                    Messages.Clear();
+                                    ChatTitle.Text = "No channels";
+                                    ChatSubtitle.Text = "Create a channel to start chatting";
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+
             try 
             { 
                 await _hubConnection.StartAsync(); 
@@ -225,7 +251,7 @@ namespace DevTavern.Client
                     }
                     catch { }
 
-                    // Daca lista e goala (eroare API), adaugam cel putin utilizatorul curent
+                    // Genereaza lista locala, chiar daca e goala (eroare API)
                     if (_projectMembers[project.name].Count == 0)
                     {
                         _projectMembers[project.name].Add(new MemberItem
@@ -237,6 +263,27 @@ namespace DevTavern.Client
                             AvatarUrl = _avatarUrl
                         });
                     }
+
+                    // Aducem rolurile custom din BD Server
+                    try
+                    {
+                        var rolesResp = await _apiClient.GetAsync($"projects/{project.DbId}/roles");
+                        if (rolesResp.IsSuccessStatusCode)
+                        {
+                            var rolesArr = JArray.Parse(await rolesResp.Content.ReadAsStringAsync());
+                            foreach (var rJson in rolesArr)
+                            {
+                                string roleUsername = rJson["username"]?.ToString() ?? "";
+                                string devRolesStr = rJson["devRoles"]?.ToString() ?? "";
+                                var member = _projectMembers[project.name].FirstOrDefault(m => m.Username == roleUsername);
+                                if (member != null && !string.IsNullOrEmpty(devRolesStr))
+                                {
+                                    member.DevRoles = devRolesStr.Split(new[] { ", ", "," }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                                }
+                            }
+                        }
+                    }
+                    catch { }
                 }
                 catch { }
             }
@@ -908,32 +955,50 @@ namespace DevTavern.Client
             DeleteConfirmOverlay.Visibility = Visibility.Collapsed;
         }
 
-        private void DeleteConfirmYes_Click(object sender, RoutedEventArgs e)
+        private async void DeleteConfirmYes_Click(object sender, RoutedEventArgs e)
         {
             DeleteConfirmOverlay.Visibility = Visibility.Collapsed;
 
             if (_editingChannel == null || _selectedProject == null) return;
 
-            // Remove from local collection
-            if (_projectChannels.TryGetValue(_selectedProject, out var channels))
-            {
-                channels.Remove(_editingChannel);
+            var proj = _projects.FirstOrDefault(p => p.name == _selectedProject);
+            if (proj == null || proj.DbId == 0) return;
 
-                // If we deleted the currently selected channel, switch to first available
-                if (_selectedChannelId == _editingChannel.Id)
+            try
+            {
+                var resp = await _apiClient.DeleteAsync($"channels/{_editingChannel.Id}");
+                if (resp.IsSuccessStatusCode)
                 {
-                    if (channels.Count > 0)
+                    int deletedId = _editingChannel.Id;
+
+                    // Remove from local collection
+                    if (_projectChannels.TryGetValue(_selectedProject, out var channels))
                     {
-                        ChannelList.SelectedIndex = 0;
+                        channels.Remove(_editingChannel);
+
+                        if (_selectedChannelId == deletedId)
+                        {
+                            if (channels.Count > 0)
+                            {
+                                ChannelList.SelectedIndex = 0;
+                            }
+                            else
+                            {
+                                Messages.Clear();
+                                ChatTitle.Text = "No channels";
+                                ChatSubtitle.Text = "Create a channel to start chatting";
+                            }
+                        }
                     }
-                    else
+
+                    // Notificare SignalR pentru restul echipei
+                    if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
                     {
-                        Messages.Clear();
-                        ChatTitle.Text = "No channels";
-                        ChatSubtitle.Text = "Create a channel to start chatting";
+                        await _hubConnection.InvokeAsync("NotifyChannelDeleted", proj.DbId.ToString(), deletedId);
                     }
                 }
             }
+            catch { }
 
             ChannelSettingsOverlay.Visibility = Visibility.Collapsed;
             _editingChannel = null;
@@ -1015,6 +1080,19 @@ namespace DevTavern.Client
                         {
                             me.DevRoles.Add(cbText);
                         }
+                    }
+
+                    // Salvare in Backend DB
+                    var proj = _projects.FirstOrDefault(p => p.name == _selectedProject);
+                    if (proj != null && proj.DbId > 0)
+                    {
+                        try
+                        {
+                            var postData = new { Username = _username, DevRoles = string.Join(", ", me.DevRoles) };
+                            var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
+                            _apiClient.PostAsync($"projects/{proj.DbId}/roles", content);
+                        }
+                        catch { }
                     }
 
                     // Refresh binding for members list

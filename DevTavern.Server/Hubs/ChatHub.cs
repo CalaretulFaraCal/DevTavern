@@ -34,6 +34,11 @@ namespace DevTavern.Server.Hubs
             await Clients.Group($"Project_{projectId}").SendAsync("ChannelCreated", channelId, channelName);
         }
 
+        public async Task NotifyChannelDeleted(string projectId, int channelId)
+        {
+            await Clients.Group($"Project_{projectId}").SendAsync("ChannelDeleted", channelId);
+        }
+
         // Trimite un mesaj live doar catre utilizatorii care sunt in acelasi grup (Canal)
         public async Task SendLiveMessage(string channelId, string username, string avatarUrl, string messageContent)
         {

@@ -13,11 +13,13 @@ namespace DevTavern.Server.Controllers
     public class ChannelsController : ControllerBase
     {
         private readonly IRepository<Channel> _channelRepository;
+        private readonly IRepository<Message> _messageRepository;
         private readonly IChannelFactory _channelFactory;
 
-        public ChannelsController(IRepository<Channel> channelRepository, IChannelFactory channelFactory)
+        public ChannelsController(IRepository<Channel> channelRepository, IRepository<Message> messageRepository, IChannelFactory channelFactory)
         {
             _channelRepository = channelRepository;
+            _messageRepository = messageRepository;
             _channelFactory = channelFactory;
         }
 
@@ -76,6 +78,29 @@ namespace DevTavern.Server.Controllers
             
             await _channelRepository.AddAsync(customChannel);
             return Ok(customChannel);
+        }
+        // DELETE /api/channels/{id} - sterge un canal
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteChannel(int id)
+        {
+            var allChannels = await _channelRepository.GetAllAsync();
+            var channelToDelete = allChannels.FirstOrDefault(c => c.Id == id);
+            
+            if (channelToDelete == null) return NotFound();
+
+            // Stergem toate mesajele asociate
+            var allMessages = await _messageRepository.GetAllAsync();
+            var relatedMessages = allMessages.Where(m => m.ChannelId == id).ToList();
+
+            foreach (var msg in relatedMessages)
+            {
+                _messageRepository.Delete(msg);
+            }
+            await _messageRepository.SaveChangesAsync();
+
+            _channelRepository.Delete(channelToDelete);
+            await _channelRepository.SaveChangesAsync();
+            return NoContent();
         }
     }
 }

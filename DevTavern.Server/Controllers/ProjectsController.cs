@@ -15,11 +15,13 @@ namespace DevTavern.Server.Controllers
     {
         private readonly IRepository<Project> _projectRepository;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly DevTavern.Server.Data.ApplicationDbContext _context;
 
-        public ProjectsController(IRepository<Project> projectRepository, IHttpClientFactory httpClientFactory)
+        public ProjectsController(IRepository<Project> projectRepository, IHttpClientFactory httpClientFactory, DevTavern.Server.Data.ApplicationDbContext context)
         {
             _projectRepository = projectRepository;
             _httpClientFactory = httpClientFactory;
+            _context = context;
         }
 
         // GET /api/projects
@@ -101,6 +103,32 @@ namespace DevTavern.Server.Controllers
             }
 
             return Ok(filteredRepos);
+        }
+
+        // GET /api/projects/{projectId}/roles
+        [HttpGet("{projectId}/roles")]
+        public ActionResult<IEnumerable<ProjectRoleMapping>> GetProjectRoles(int projectId)
+        {
+            var roles = _context.ProjectRoles.Where(r => r.ProjectId == projectId).ToList();
+            return Ok(roles);
+        }
+
+        // POST /api/projects/{projectId}/roles
+        [HttpPost("{projectId}/roles")]
+        public async Task<IActionResult> SaveProjectRoles(int projectId, [FromBody] ProjectRoleMapping roleData)
+        {
+            var existing = _context.ProjectRoles.FirstOrDefault(r => r.ProjectId == projectId && r.Username == roleData.Username);
+            if (existing != null)
+            {
+                existing.DevRoles = roleData.DevRoles;
+            }
+            else
+            {
+                roleData.ProjectId = projectId;
+                _context.ProjectRoles.Add(roleData);
+            }
+            await _context.SaveChangesAsync();
+            return Ok(roleData);
         }
     }
 }

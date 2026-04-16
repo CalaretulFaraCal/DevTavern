@@ -14,6 +14,7 @@ namespace DevTavern.Server.Data
         public DbSet<Project> Projects { get; set; }
         public DbSet<Channel> Channels { get; set; }
         public DbSet<Message> Messages { get; set; }
+        public DbSet<ProjectRoleMapping> ProjectRoles { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
