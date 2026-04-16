@@ -24,7 +24,8 @@ namespace DevTavern.Tests
         {
             _mockProjectRepo = new Mock<IRepository<Project>>();
             _mockHttpClientFactory = new Mock<IHttpClientFactory>();
-            _controller = new ProjectsController(_mockProjectRepo.Object, _mockHttpClientFactory.Object);
+            // Parameter context is not covered in these specific basic tests, null! is safely ignored.
+            _controller = new ProjectsController(_mockProjectRepo.Object, _mockHttpClientFactory.Object, null!);
         }
 
         // =====================================================

@@ -14,14 +14,16 @@ namespace DevTavern.Tests
     public class ChannelsControllerTests
     {
         private readonly Mock<IRepository<Channel>> _mockChannelRepo;
+        private readonly Mock<IRepository<Message>> _mockMessageRepo;
         private readonly Mock<IChannelFactory> _mockChannelFactory;
         private readonly ChannelsController _controller;
 
         public ChannelsControllerTests()
         {
             _mockChannelRepo = new Mock<IRepository<Channel>>();
+            _mockMessageRepo = new Mock<IRepository<Message>>();
             _mockChannelFactory = new Mock<IChannelFactory>();
-            _controller = new ChannelsController(_mockChannelRepo.Object, _mockChannelFactory.Object);
+            _controller = new ChannelsController(_mockChannelRepo.Object, _mockMessageRepo.Object, _mockChannelFactory.Object);
         }
 
         // =====================================================
