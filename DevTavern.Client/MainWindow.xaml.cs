@@ -12,6 +12,7 @@ using System.Windows.Media.Imaging;
 using Microsoft.AspNetCore.SignalR.Client;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using ICSharpCode.AvalonEdit.Highlighting;
 
 namespace DevTavern.Client
 {
@@ -56,6 +57,10 @@ namespace DevTavern.Client
             {
                 project.IconLetters = GenerateIconLetters(project.name);
             }
+
+            // Customize AvalonEdit for Dark Theme
+            CodeViewerContent.TextArea.Caret.CaretBrush = Brushes.Transparent;
+            CodeViewerContent.TextArea.TextView.LineTransformers.Add(new DarkModeColorizer());
 
             // Populate sidebar
             ProjectList.ItemsSource = _projects;
@@ -102,7 +107,7 @@ namespace DevTavern.Client
                 {
                     if (senderUsername == _username) return;
 
-                    Messages.Add(new ChatMessage
+                    Messages.Add(ParseMessageContent(new ChatMessage
                     {
                         Username = senderUsername,
                         Initials = senderUsername.Length >= 2 ? senderUsername.Substring(0, 2).ToUpper() : senderUsername.ToUpper(),
@@ -113,7 +118,7 @@ namespace DevTavern.Client
                         Timestamp = DateTime.Now.ToString("HH:mm"),
                         IsSystemMessage = false,
                         IsMentioningMe = messageContent.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
-                    });
+                    }));
                     Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
                         System.Windows.Threading.DispatcherPriority.Background);
                 });
@@ -348,6 +353,11 @@ namespace DevTavern.Client
 
                 HomeView.Visibility = Visibility.Collapsed;
                 ChatView.Visibility = Visibility.Visible;
+                
+                if (_codeBrowserVisible)
+                {
+                    _ = LoadCodeBrowserAsync();
+                }
             }
         }
 
@@ -512,7 +522,7 @@ namespace DevTavern.Client
                             msgAvatarUrl = m["user"]?["avatarUrl"]?.ToString() ?? "";
                         }
 
-                        Messages.Add(new ChatMessage
+                        Messages.Add(ParseMessageContent(new ChatMessage
                         {
                             Username = msgUsername,
                             Initials = msgUsername.Length >= 2 ? msgUsername.Substring(0, 2).ToUpper() : msgUsername.ToUpper(),
@@ -523,19 +533,19 @@ namespace DevTavern.Client
                             Timestamp = time,
                             IsSystemMessage = false,
                             IsMentioningMe = content.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
-                        });
+                        }));
                     }
                 }
                 catch { }
 
                 if (Messages.Count == 0)
                 {
-                    Messages.Add(new ChatMessage
+                    Messages.Add(ParseMessageContent(new ChatMessage
                     {
                         IsSystemMessage = true,
                         Content = $"Welcome to #{selectedChannel.Name}! This is the beginning of the conversation.",
                         Timestamp = DateTime.Now.ToString("HH:mm")
-                    });
+                    }));
                 }
 
                 await Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
@@ -544,8 +554,19 @@ namespace DevTavern.Client
             }
         }
 
+        private bool _codeBrowserVisible = false;
+
         private void ToggleMembersButton_Click(object sender, RoutedEventArgs e)
         {
+            // If code browser is open, close it first
+            if (_codeBrowserVisible)
+            {
+                CodeBrowserPanel.Visibility = Visibility.Collapsed;
+                CodeBrowserSplitter.Visibility = Visibility.Collapsed;
+                SplitterColumn.Width = new GridLength(0);
+                _codeBrowserVisible = false;
+            }
+
             _membersPanelVisible = !_membersPanelVisible;
 
             if (_membersPanelVisible)
@@ -781,6 +802,11 @@ namespace DevTavern.Client
 
             if (e.Key == Key.Enter)
             {
+                if (Keyboard.Modifiers == ModifierKeys.Shift)
+                {
+                    return;
+                }
+
                 SendMessage();
                 e.Handled = true;
             }
@@ -794,7 +820,7 @@ namespace DevTavern.Client
             if (string.IsNullOrEmpty(text) || _selectedProject == null || _selectedChannelId == 0) return;
 
             // Afisam mesajul local imediat (optimistic UI)
-            Messages.Add(new ChatMessage
+            Messages.Add(ParseMessageContent(new ChatMessage
             {
                 Username = _username,
                 Initials = _username.Length >= 2 ? _username.Substring(0, 2).ToUpper() : _username.ToUpper(),
@@ -805,7 +831,7 @@ namespace DevTavern.Client
                 Timestamp = DateTime.Now.ToString("HH:mm"),
                 IsSystemMessage = false,
                 IsMentioningMe = text.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
-            });
+            }));
 
             await Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
                 System.Windows.Threading.DispatcherPriority.Background);
@@ -1026,7 +1052,318 @@ namespace DevTavern.Client
             // Close this window
             this.Close();
         }
-        
+
+        // ========== Code Browser ==========
+
+        private string _codeBrowserCurrentBranch = "";
+        private bool _codeBranchChanging = false;
+
+        private void BrowseCodeButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_codeBrowserVisible)
+            {
+                CodeBrowserPanel.Visibility = Visibility.Collapsed;
+                CodeBrowserSplitter.Visibility = Visibility.Collapsed;
+                SplitterColumn.Width = new GridLength(0);
+                MembersPanelColumn.Width = new GridLength(0);
+                _codeBrowserVisible = false;
+            }
+            else
+            {
+                _ = LoadCodeBrowserAsync();
+            }
+        }
+
+        private async Task LoadCodeBrowserAsync()
+        {
+            if (_selectedProject == null) return;
+
+            var proj = _projects.FirstOrDefault(p => p.name == _selectedProject);
+            if (proj == null || string.IsNullOrEmpty(proj.fullName)) return;
+
+            CodeBrowserTitle.Text = proj.name;
+            CodeBrowserSubtitle.Text = proj.fullName;
+
+            // Reset state
+            CodeTreeView.ItemsSource = null;
+            CodeViewerContent.Text = "";
+            CodeViewerFilePath.Text = "Select a file to view its contents";
+            CodeViewerWelcome.Visibility = Visibility.Visible;
+            CodeContentLoading.Visibility = Visibility.Collapsed;
+            CodeTreeLoading.Visibility = Visibility.Visible;
+
+            // Close members panel if open, show code browser panel
+            if (_membersPanelVisible)
+            {
+                MembersPanelBorder.Visibility = Visibility.Collapsed;
+                _membersPanelVisible = false;
+            }
+
+            // Open code browser — use half the chat area width
+            SplitterColumn.Width = new GridLength(5);
+            MembersPanelColumn.Width = new GridLength(1, GridUnitType.Star);
+            CodeBrowserSplitter.Visibility = Visibility.Visible;
+            CodeBrowserPanel.Visibility = Visibility.Visible;
+            _codeBrowserVisible = true;
+
+            // Fetch branches
+            try
+            {
+                using var ghClient = new HttpClient();
+                ghClient.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                ghClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+
+                var branchResp = await ghClient.GetStringAsync($"https://api.github.com/repos/{proj.fullName}/branches");
+                var branchArr = JArray.Parse(branchResp);
+
+                var branchNames = new List<string>();
+                foreach (var b in branchArr)
+                {
+                    branchNames.Add(b["name"]?.ToString() ?? "");
+                }
+
+                _codeBranchChanging = true;
+                CodeBranchSelector.ItemsSource = branchNames;
+
+                // Select main or master by default
+                int defaultIdx = branchNames.IndexOf("main");
+                if (defaultIdx < 0) defaultIdx = branchNames.IndexOf("master");
+                if (defaultIdx < 0 && branchNames.Count > 0) defaultIdx = 0;
+
+                CodeBranchSelector.SelectedIndex = defaultIdx;
+                _codeBranchChanging = false;
+
+                if (defaultIdx >= 0)
+                {
+                    _codeBrowserCurrentBranch = branchNames[defaultIdx];
+                    await LoadBranchTree(proj.fullName, _codeBrowserCurrentBranch);
+                }
+            }
+            catch (Exception ex)
+            {
+                CodeTreeLoading.Text = $"Error: {ex.Message}";
+            }
+        }
+
+        private async void CodeBranchSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_codeBranchChanging) return;
+            if (CodeBranchSelector.SelectedItem is string branch && !string.IsNullOrEmpty(branch))
+            {
+                _codeBrowserCurrentBranch = branch;
+
+                var proj = _projects.FirstOrDefault(p => p.name == _selectedProject);
+                if (proj != null && !string.IsNullOrEmpty(proj.fullName))
+                {
+                    // Reset code viewer
+                    CodeViewerContent.Text = "";
+                    CodeViewerFilePath.Text = "Select a file to view its contents";
+                    CodeViewerWelcome.Visibility = Visibility.Visible;
+                    CodeContentLoading.Visibility = Visibility.Collapsed;
+
+                    await LoadBranchTree(proj.fullName, branch);
+                }
+            }
+        }
+
+        private async Task LoadBranchTree(string fullName, string branch)
+        {
+            CodeTreeView.ItemsSource = null;
+            CodeTreeLoading.Text = "Loading file tree...";
+            CodeTreeLoading.Visibility = Visibility.Visible;
+
+            try
+            {
+                using var ghClient = new HttpClient();
+                ghClient.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                ghClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+
+                var treeResp = await ghClient.GetStringAsync($"https://api.github.com/repos/{fullName}/git/trees/{branch}?recursive=1");
+                var treeJson = JObject.Parse(treeResp);
+                var treeArr = treeJson["tree"] as JArray;
+
+                if (treeArr == null)
+                {
+                    CodeTreeLoading.Text = "No files found.";
+                    return;
+                }
+
+                // Build hierarchical tree
+                var root = new List<GitTreeNode>();
+                var nodeMap = new Dictionary<string, GitTreeNode>();
+
+                // Sort so that trees come before blobs, and alphabetical
+                var sortedItems = treeArr
+                    .OrderBy(i => i["type"]?.ToString() == "blob" ? 1 : 0)
+                    .ThenBy(i => i["path"]?.ToString())
+                    .ToList();
+
+                foreach (var item in sortedItems)
+                {
+                    string path = item["path"]?.ToString() ?? "";
+                    string type = item["type"]?.ToString() ?? "";
+
+                    if (string.IsNullOrEmpty(path)) continue;
+
+                    var parts = path.Split('/');
+                    string name = parts[parts.Length - 1];
+
+                    var node = new GitTreeNode
+                    {
+                        Name = name,
+                        FullPath = path,
+                        IsDirectory = type == "tree",
+                        Children = new ObservableCollection<GitTreeNode>()
+                    };
+
+                    nodeMap[path] = node;
+
+                    if (parts.Length == 1)
+                    {
+                        root.Add(node);
+                    }
+                    else
+                    {
+                        string parentPath = string.Join("/", parts.Take(parts.Length - 1));
+                        if (nodeMap.TryGetValue(parentPath, out var parentNode))
+                        {
+                            parentNode.Children.Add(node);
+                        }
+                        else
+                        {
+                            root.Add(node);
+                        }
+                    }
+                }
+
+                // Sort each folder: directories first, then files, alphabetical
+                SortTreeNodes(root);
+
+                CodeTreeView.ItemsSource = root;
+                CodeTreeLoading.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                CodeTreeLoading.Text = $"Error: {ex.Message}";
+            }
+        }
+
+        private void SortTreeNodes(List<GitTreeNode> nodes)
+        {
+            nodes.Sort((a, b) =>
+            {
+                if (a.IsDirectory != b.IsDirectory) return a.IsDirectory ? -1 : 1;
+                return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+            });
+
+            foreach (var node in nodes)
+            {
+                if (node.Children.Count > 0)
+                {
+                    var childList = node.Children.ToList();
+                    SortTreeNodes(childList);
+                    node.Children = new ObservableCollection<GitTreeNode>(childList);
+                }
+            }
+        }
+
+        private async void CodeTreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            if (e.NewValue is GitTreeNode selectedNode && !selectedNode.IsDirectory)
+            {
+                var proj = _projects.FirstOrDefault(p => p.name == _selectedProject);
+                if (proj == null || string.IsNullOrEmpty(proj.fullName)) return;
+
+                CodeViewerWelcome.Visibility = Visibility.Collapsed;
+                CodeViewerContent.Visibility = Visibility.Collapsed;
+                CodeContentLoading.Visibility = Visibility.Visible;
+                CodeViewerFilePath.Text = selectedNode.FullPath;
+
+                try
+                {
+                    using var ghClient = new HttpClient();
+                    ghClient.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                    ghClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+
+                    var contentResp = await ghClient.GetStringAsync(
+                        $"https://api.github.com/repos/{proj.fullName}/contents/{selectedNode.FullPath}?ref={_codeBrowserCurrentBranch}");
+                    var contentJson = JObject.Parse(contentResp);
+
+                    string encoding = contentJson["encoding"]?.ToString() ?? "";
+                    string content = contentJson["content"]?.ToString() ?? "";
+                    int size = contentJson["size"]?.ToObject<int>() ?? 0;
+
+                    if (encoding == "base64" && !string.IsNullOrEmpty(content))
+                    {
+                        // Decode base64 content
+                        byte[] bytes = Convert.FromBase64String(content);
+                        string decoded = System.Text.Encoding.UTF8.GetString(bytes);
+
+                        // AvalonEdit natively handles line numbers, just assign pure text.
+                        CodeViewerContent.Text = decoded;
+                        string ext = System.IO.Path.GetExtension(selectedNode.FullPath);
+                        CodeViewerContent.SyntaxHighlighting = HighlightingManager.Instance.GetDefinitionByExtension(ext) ?? HighlightingManager.Instance.GetDefinitionByExtension(".txt");
+                        CodeViewerContent.Visibility = Visibility.Visible;
+                    }
+                    else if (size > 1_000_000)
+                    {
+                        CodeViewerContent.Text = "⚠ File too large to display.";
+                        CodeViewerContent.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        CodeViewerContent.Text = "⚠ Binary file — cannot display content.";
+                        CodeViewerContent.Visibility = Visibility.Visible;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    CodeViewerContent.Text = $"Error loading file: {ex.Message}";
+                    CodeViewerContent.Visibility = Visibility.Visible;
+                }
+
+                CodeContentLoading.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void CloseCodeBrowser_Click(object sender, RoutedEventArgs e)
+        {
+            CodeBrowserPanel.Visibility = Visibility.Collapsed;
+            CodeBrowserSplitter.Visibility = Visibility.Collapsed;
+            SplitterColumn.Width = new GridLength(0);
+            MembersPanelColumn.Width = new GridLength(0);
+            _codeBrowserVisible = false;
+        }
+
+        private void QuoteSelectedCode_Click(object sender, RoutedEventArgs e)
+        {
+            if (CodeViewerContent.SelectedText.Length > 0 && _selectedChannelId > 0)
+            {
+                string selectedCode = CodeViewerContent.SelectedText;
+                string filePath = CodeViewerFilePath.Text;
+                string separator = filePath.Contains("/") ? "/" : "\\";
+                string fileName = filePath.Contains(separator) ? filePath.Substring(filePath.LastIndexOf(separator) + 1) : filePath;
+
+                string currentText = MessageInput.Text ?? "";
+                if (currentText.Length > 0 && !currentText.EndsWith("\n"))
+                {
+                    currentText += "\n";
+                }
+
+                currentText += $"[CodeRef: {_codeBrowserCurrentBranch}|{filePath}]\nFrom `{fileName}`:\n```\n{selectedCode}\n```\n";
+
+                MessageInput.Text = currentText;
+                MessageInput.CaretIndex = MessageInput.Text.Length;
+                MessageInput.Focus();
+                
+                // Also close code browser to let user chat? Not necessarily, user can do it.
+            }
+            else if (_selectedChannelId == 0)
+            {
+                MessageBox.Show("Vă rugăm să selectați un canal înainte de a menționa codul.", "Eroare", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
         // ========== Set Roles Overlay ==========
 
         private void SetRoleButton_Click(object sender, RoutedEventArgs e)
@@ -1283,6 +1620,126 @@ namespace DevTavern.Client
 
             ImportProjectsOverlay.Visibility = Visibility.Collapsed;
         }
+        private ChatMessage ParseMessageContent(ChatMessage msg)
+        {
+            msg.DisplayContent = msg.Content;
+            if (msg.Content.StartsWith("[CodeRef:") || msg.Content.Contains("\n[CodeRef:"))
+            {
+                int startIndex = msg.Content.IndexOf("[CodeRef:");
+                if (startIndex >= 0)
+                {
+                    int endIndex = msg.Content.IndexOf("]", startIndex);
+                    if (endIndex > startIndex)
+                    {
+                        string refData = msg.Content.Substring(startIndex + 9, endIndex - startIndex - 9);
+                        var parts = refData.Split(new[] { '|' }, 2);
+                        if (parts.Length == 2)
+                        {
+                            msg.HasCodeReference = true;
+                            msg.CodeBranch = parts[0].Trim();
+                            msg.CodeFilePath = parts[1].Trim();
+                            
+                            string before = msg.Content.Substring(0, startIndex).Trim();
+                            string after = msg.Content.Substring(endIndex + 1).Trim();
+                            string rawDisplay = (before + "\n" + after).Trim();
+
+                            int codeBlockStart = rawDisplay.IndexOf("```");
+                            if (codeBlockStart >= 0)
+                            {
+                                int contentStart = codeBlockStart + 3;
+                                if (rawDisplay.Length > contentStart && rawDisplay[contentStart] == '\n') contentStart++;
+                                int codeBlockEnd = rawDisplay.IndexOf("```", contentStart);
+                                if (codeBlockEnd >= 0)
+                                {
+                                    msg.CodeSelectedText = rawDisplay.Substring(contentStart, codeBlockEnd - contentStart).Trim('\r','\n');
+                                    string beforeBlock = rawDisplay.Substring(0, codeBlockStart).Trim();
+                                    string afterBlock = rawDisplay.Substring(codeBlockEnd + 3).Trim();
+                                    rawDisplay = (beforeBlock + "\n" + afterBlock).Trim();
+                                }
+                            }
+                            
+                            msg.DisplayContent = rawDisplay;
+                        }
+                    }
+                }
+            }
+            return msg;
+        }
+
+        private async void JumpToCode_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.DataContext is ChatMessage msg && msg.HasCodeReference)
+            {
+                if (!_codeBrowserVisible)
+                {
+                    await LoadCodeBrowserAsync();
+                }
+
+                // Try to set branch
+                if (CodeBranchSelector.Items.Contains(msg.CodeBranch))
+                {
+                    CodeBranchSelector.SelectedItem = msg.CodeBranch;
+                }
+
+                var proj = _projects.FirstOrDefault(p => p.name == _selectedProject);
+                if (proj == null || string.IsNullOrEmpty(proj.fullName)) return;
+
+                CodeViewerWelcome.Visibility = Visibility.Collapsed;
+                CodeViewerContent.Visibility = Visibility.Collapsed;
+                CodeContentLoading.Visibility = Visibility.Visible;
+                CodeViewerFilePath.Text = msg.CodeFilePath;
+
+                try
+                {
+                    using var ghClient = new HttpClient();
+                    ghClient.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                    ghClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+
+                    var contentResp = await ghClient.GetStringAsync(
+                        $"https://api.github.com/repos/{proj.fullName}/contents/{msg.CodeFilePath}?ref={msg.CodeBranch}");
+                    var contentJson = JObject.Parse(contentResp);
+
+                    string encoding = contentJson["encoding"]?.ToString() ?? "";
+                    string content = contentJson["content"]?.ToString() ?? "";
+
+                    if (encoding == "base64" && !string.IsNullOrEmpty(content))
+                    {
+                        byte[] bytes = Convert.FromBase64String(content);
+                        string decoded = System.Text.Encoding.UTF8.GetString(bytes);
+
+                        CodeViewerContent.Text = decoded;
+                        string ext = System.IO.Path.GetExtension(msg.CodeFilePath);
+                        CodeViewerContent.SyntaxHighlighting = HighlightingManager.Instance.GetDefinitionByExtension(ext) ?? HighlightingManager.Instance.GetDefinitionByExtension(".txt");
+                        CodeViewerContent.Visibility = Visibility.Visible;
+
+                        // Give it time to render then select text
+                        await Task.Delay(100);
+                        
+                        // Select the code snippet
+                        if (!string.IsNullOrEmpty(msg.CodeSelectedText))
+                        {
+                            int idx = CodeViewerContent.Text.IndexOf(msg.CodeSelectedText);
+                            if (idx >= 0)
+                            {
+                                CodeViewerContent.Focus();
+                                CodeViewerContent.Select(idx, msg.CodeSelectedText.Length);
+                                
+                                // Scroll to specific line (AvalonEdit is 1-indexed for lines)
+                                int lineIndex = CodeViewerContent.Text.Substring(0, idx).Split('\n').Length;
+                                CodeViewerContent.ScrollToLine(Math.Max(1, lineIndex - 5));
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    CodeViewerContent.Text = $"Error dynamically loading file: {ex.Message}";
+                    CodeViewerContent.Visibility = Visibility.Visible;
+                }
+
+                CodeContentLoading.Visibility = Visibility.Collapsed;
+            }
+        }
     }
     public class ChatMessage
     {
@@ -1296,6 +1753,12 @@ namespace DevTavern.Client
         public bool IsSystemMessage { get; set; } = false;
         public bool HasAvatar => !string.IsNullOrEmpty(AvatarUrl);
         public bool IsMentioningMe { get; set; } = false;
+
+        public bool HasCodeReference { get; set; } = false;
+        public string CodeFilePath { get; set; } = "";
+        public string CodeBranch { get; set; } = "";
+        public string CodeSelectedText { get; set; } = "";
+        public string DisplayContent { get; set; } = "";
     }
 
     public class ChannelItem
@@ -1317,5 +1780,89 @@ namespace DevTavern.Client
         public List<string> DevRoles { get; set; } = new List<string>();
         public string RoleBadges => DevRoles != null && DevRoles.Count > 0 ? string.Join(" · ", DevRoles) : "";
         public bool HasDevRoles => DevRoles != null && DevRoles.Count > 0;
+    }
+
+    public class GitTreeNode
+    {
+        public string Name { get; set; } = "";
+        public string FullPath { get; set; } = "";
+        public bool IsDirectory { get; set; }
+        public ObservableCollection<GitTreeNode> Children { get; set; } = new ObservableCollection<GitTreeNode>();
+        public string Icon => IsDirectory ? "📁" : "📄";
+    }
+
+    public class DarkModeColorizer : ICSharpCode.AvalonEdit.Rendering.DocumentColorizingTransformer
+    {
+        protected override void ColorizeLine(ICSharpCode.AvalonEdit.Document.DocumentLine line)
+        {
+            ChangeLinePart(line.Offset, line.EndOffset, (element) =>
+            {
+                if (element.TextRunProperties.ForegroundBrush is SolidColorBrush brush)
+                {
+                    var c = brush.Color;
+                    if (c.R == 201 && c.G == 209 && c.B == 217) return; // Ignore default text color
+
+                    if (c.R < 30 && c.G < 30 && c.B < 30) // Turn pure black into normal text
+                    {
+                        element.TextRunProperties.SetForegroundBrush(new SolidColorBrush(Color.FromRgb(201, 209, 217)));
+                    }
+                    else
+                    {
+                        // Lighten standard syntax colors (makes dark blue into light blue, dark red to light red)
+                        byte r = (byte)Math.Min(255, c.R + 80);
+                        byte g = (byte)Math.Min(255, c.G + 80);
+                        byte b = (byte)Math.Min(255, c.B + 80);
+                        element.TextRunProperties.SetForegroundBrush(new SolidColorBrush(Color.FromRgb(r, g, b)));
+                    }
+                }
+            });
+        }
+    }
+
+    public static class TextBlockHelper
+    {
+        public static readonly DependencyProperty FormattedTextProperty =
+            DependencyProperty.RegisterAttached("FormattedText", typeof(string), typeof(TextBlockHelper), new PropertyMetadata(string.Empty, OnFormattedTextChanged));
+
+        public static void SetFormattedText(DependencyObject obj, string value)
+        {
+            obj.SetValue(FormattedTextProperty, value);
+        }
+
+        public static string GetFormattedText(DependencyObject obj)
+        {
+            return (string)obj.GetValue(FormattedTextProperty);
+        }
+
+        private static void OnFormattedTextChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is TextBlock textBlock)
+            {
+                var text = e.NewValue as string ?? string.Empty;
+                textBlock.Inlines.Clear();
+
+                if (string.IsNullOrEmpty(text)) return;
+
+                var parts = System.Text.RegularExpressions.Regex.Split(text, @"(@[a-zA-Z0-9_\-]+)");
+                foreach (var part in parts)
+                {
+                    if (string.IsNullOrEmpty(part)) continue;
+
+                    if (part.StartsWith("@") && part.Length > 1)
+                    {
+                        var run = new System.Windows.Documents.Run(part)
+                        {
+                            Foreground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#E3B341")),
+                            FontWeight = FontWeights.Bold
+                        };
+                        textBlock.Inlines.Add(run);
+                    }
+                    else
+                    {
+                        textBlock.Inlines.Add(new System.Windows.Documents.Run(part));
+                    }
+                }
+            }
+        }
     }
 }
