@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
@@ -40,7 +42,7 @@ namespace DevTavern.Client
                 LoginButton.IsEnabled = false;
                 try
                 {
-                    _accessToken = await File.ReadAllTextAsync(tokenPath);
+                    _accessToken = GitHubAuthService.TryGetCachedToken();
                     var cachedProjectsJson = await File.ReadAllTextAsync(projectsPath);
                     var selectedRepos = JsonConvert.DeserializeObject<List<RepoItem>>(cachedProjectsJson) ?? new List<RepoItem>();
 
@@ -226,7 +228,7 @@ namespace DevTavern.Client
         }
     }
 
-    public class RepoItem
+    public class RepoItem : INotifyPropertyChanged
     {
         public string id { get; set; } = string.Empty;
         public string name { get; set; } = string.Empty;
@@ -237,5 +239,24 @@ namespace DevTavern.Client
         public bool isSelected { get; set; }
         public string IconLetters { get; set; } = "";
         public string VisibilityLabel => isPrivate ? "Private" : "Public";
+
+        private int _unreadMentionCount;
+        public int UnreadMentionCount
+        {
+            get => _unreadMentionCount;
+            set { _unreadMentionCount = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasMentions)); }
+        }
+        public bool HasMentions => _unreadMentionCount > 0;
+
+        private bool _hasUnreadMessages;
+        public bool HasUnreadMessages
+        {
+            get => _hasUnreadMessages;
+            set { _hasUnreadMessages = value; OnPropertyChanged(); }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? propName = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
     }
 }

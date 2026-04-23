@@ -4,6 +4,8 @@ using System.Net;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -20,7 +22,7 @@ namespace DevTavern.Client.Services
             // Verificăm dacă avem deja tokenul salvat din sesiunea trecută (Cerere: "sa nu te loghezi mereu")
             if (File.Exists(TokenFilePath))
             {
-                string savedToken = await File.ReadAllTextAsync(TokenFilePath);
+                string savedToken = ReadEncryptedToken();
                 if (!string.IsNullOrWhiteSpace(savedToken))
                     return savedToken; // Sarim complet peste browser!
             }
@@ -76,13 +78,42 @@ namespace DevTavern.Client.Services
             
             string? accessToken = json["access_token"]?.ToString();
             
-            // Când login-ul a mers perfect, memorăm token-ul local.
+            // Când login-ul a mers perfect, memorăm token-ul local (criptat cu DPAPI).
             if (!string.IsNullOrWhiteSpace(accessToken))
             {
-                await File.WriteAllTextAsync(TokenFilePath, accessToken);
+                WriteEncryptedToken(accessToken);
             }
 
             return accessToken ?? string.Empty;
+        }
+
+        internal static string TryGetCachedToken()
+        {
+            if (!File.Exists(TokenFilePath)) return string.Empty;
+            return ReadEncryptedToken();
+        }
+
+        private static void WriteEncryptedToken(string token)
+        {
+            var plainBytes = Encoding.UTF8.GetBytes(token);
+            var encryptedBytes = ProtectedData.Protect(plainBytes, null, DataProtectionScope.CurrentUser);
+            File.WriteAllBytes(TokenFilePath, encryptedBytes);
+        }
+
+        private static string ReadEncryptedToken()
+        {
+            try
+            {
+                var encryptedBytes = File.ReadAllBytes(TokenFilePath);
+                var plainBytes = ProtectedData.Unprotect(encryptedBytes, null, DataProtectionScope.CurrentUser);
+                return Encoding.UTF8.GetString(plainBytes);
+            }
+            catch
+            {
+                // Fisierul e corupt sau de pe alt user — stergem si re-autentificam
+                ClearTokenCache();
+                return string.Empty;
+            }
         }
 
         /// <summary>

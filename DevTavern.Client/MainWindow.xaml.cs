@@ -38,6 +38,12 @@ namespace DevTavern.Client
         // Members per project
         private readonly Dictionary<string, ObservableCollection<MemberItem>> _projectMembers = new();
 
+        // Notifications
+        private readonly Dictionary<int, string> _channelToProject = new();
+        private readonly Dictionary<int, int> _lastSeenMessageCount = new();
+        private System.Windows.Threading.DispatcherTimer? _notificationTimer;
+        private bool _isPolling = false;
+
         public ObservableCollection<ChatMessage> Messages { get; set; } = new ObservableCollection<ChatMessage>();
 
         public MainWindow(string accessToken, List<RepoItem> projects, string username, string avatarUrl, int currentUserId)
@@ -119,6 +125,10 @@ namespace DevTavern.Client
                         IsSystemMessage = false,
                         IsMentioningMe = messageContent.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
                     }));
+                    // Tine lastSeenMessageCount sincronizat pentru canalul activ
+                    if (_lastSeenMessageCount.ContainsKey(_selectedChannelId))
+                        _lastSeenMessageCount[_selectedChannelId] = Messages.Count;
+
                     Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
                         System.Windows.Threading.DispatcherPriority.Background);
                 });
@@ -292,6 +302,15 @@ namespace DevTavern.Client
                 }
                 catch { }
             }
+
+            // Construieste mappingul channel -> project si porneste polling-ul
+            foreach (var proj in _projects)
+            {
+                if (_projectChannels.TryGetValue(proj.name, out var chans))
+                    foreach (var ch in chans)
+                        _channelToProject[ch.Id] = proj.name;
+            }
+            StartNotificationPolling();
         }
 
         private string GenerateIconLetters(string name)
@@ -550,6 +569,16 @@ namespace DevTavern.Client
 
                 await Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
                     System.Windows.Threading.DispatcherPriority.Background);
+
+                // Marcheaza canalul ca citit si sterge badge-urile
+                if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var chList))
+                {
+                    var readCh = chList.FirstOrDefault(c => c.Id == _selectedChannelId);
+                    if (readCh != null) { readCh.UnreadMentionCount = 0; readCh.HasUnreadMessages = false; }
+                }
+                _lastSeenMessageCount[_selectedChannelId] = Messages.Count;
+                UpdateProjectBadge(_selectedProject ?? "");
+
                 MessageInput.Focus();
             }
         }
@@ -1740,6 +1769,75 @@ namespace DevTavern.Client
                 CodeContentLoading.Visibility = Visibility.Collapsed;
             }
         }
+
+        private void UpdateProjectBadge(string projectName)
+        {
+            var project = _projects.FirstOrDefault(p => p.name == projectName);
+            if (project == null) return;
+            if (!_projectChannels.TryGetValue(projectName, out var channels)) return;
+
+            project.UnreadMentionCount = channels.Sum(c => c.UnreadMentionCount);
+            project.HasUnreadMessages = channels.Any(c => c.HasUnreadMessages);
+        }
+
+        private void StartNotificationPolling()
+        {
+            _notificationTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(20)
+            };
+            _notificationTimer.Tick += async (s, e) => await PollNotificationsAsync();
+            _notificationTimer.Start();
+        }
+
+        private async Task PollNotificationsAsync()
+        {
+            if (_isPolling) return;
+            _isPolling = true;
+            try
+            {
+                foreach (var project in _projects)
+                {
+                    if (!_projectChannels.TryGetValue(project.name, out var channels)) continue;
+                    foreach (var channel in channels)
+                    {
+                        if (channel.Id == _selectedChannelId) continue;
+                        if (!_lastSeenMessageCount.ContainsKey(channel.Id)) continue;
+
+                        try
+                        {
+                            var resp = await _apiClient.GetStringAsync($"messages/channel/{channel.Id}");
+                            var arr = JArray.Parse(resp);
+                            int newCount = arr.Count;
+                            int lastSeen = _lastSeenMessageCount[channel.Id];
+
+                            if (newCount > lastSeen)
+                            {
+                                int mentions = 0;
+                                for (int i = lastSeen; i < arr.Count; i++)
+                                {
+                                    string content = arr[i]["content"]?.ToString() ?? "";
+                                    if (content.Contains("@" + _username, StringComparison.OrdinalIgnoreCase))
+                                        mentions++;
+                                }
+                                channel.UnreadMentionCount += mentions;
+                                channel.HasUnreadMessages = true;
+                                _lastSeenMessageCount[channel.Id] = newCount;
+                                UpdateProjectBadge(project.name);
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            finally { _isPolling = false; }
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            _notificationTimer?.Stop();
+            base.OnClosed(e);
+        }
     }
     public class ChatMessage
     {
@@ -1765,6 +1863,8 @@ namespace DevTavern.Client
     {
         public int Id { get; set; }
         public string Name { get; set; } = "";
+        public int UnreadMentionCount { get; set; }
+        public bool HasUnreadMessages { get; set; }
     }
 
     public class MemberItem
