@@ -10,8 +10,33 @@ namespace DevTavern.Server.Hubs
     // SignalR Hub - comunicare in timp real intre utilizatori
     public class ChatHub : Hub
     {
-        // Thread-safe dictionary for connection tracking (ConnectionId -> (ProjectId, Username))
-        private static readonly ConcurrentDictionary<string, (string ProjectId, string Username)> _userConnections = new();
+        // Thread-safe dictionary for global connection tracking (ConnectionId -> Username)
+        private static readonly ConcurrentDictionary<string, string> _userConnections = new();
+
+        public async Task<List<string>> GoOnline(string username)
+        {
+            _userConnections[Context.ConnectionId] = username;
+            
+            // Anuntam toti utilizatorii conectati la server ca a intrat cineva
+            await Clients.All.SendAsync("UserWentOnline", username);
+
+            // Returnam lista globala cu toti utilizatorii conectati in acest moment
+            return _userConnections.Values.Distinct().ToList();
+        }
+
+        public override async Task OnDisconnectedAsync(Exception? exception)
+        {
+            if (_userConnections.TryRemove(Context.ConnectionId, out var username))
+            {
+                // Daca acest user nu mai are niciun tab/conexiune deschisa, il anuntam offline
+                bool stillOnline = _userConnections.Values.Contains(username);
+                if (!stillOnline)
+                {
+                    await Clients.All.SendAsync("UserWentOffline", username);
+                }
+            }
+            await base.OnDisconnectedAsync(exception);
+        }
 
         // Alatura utilizatorul unui grup specific (Canalul selectat)
         public async Task JoinChannel(string channelId)
@@ -24,54 +49,14 @@ namespace DevTavern.Server.Hubs
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Channel_{channelId}");
         }
 
-        // ==========================================================
-        // PROIECTE: Notificari, Prezenta Online si Roluri
-        // ==========================================================
-
-        public async Task<List<string>> JoinProject(string projectId, string username)
+        public async Task JoinProject(string projectId)
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, $"Project_{projectId}");
-            _userConnections[Context.ConnectionId] = (projectId, username);
-
-            // Anuntam restul proiectului ca acest utilizator a intrat (e online)
-            await Clients.GroupExcept($"Project_{projectId}", Context.ConnectionId).SendAsync("UserJoinedProject", username);
-
-            // Returnam lista cu numele utilizatorilor care sunt DEJA online in acest proiect
-            var onlineUsers = _userConnections.Values
-                .Where(v => v.ProjectId == projectId)
-                .Select(v => v.Username)
-                .Distinct()
-                .ToList();
-
-            return onlineUsers;
         }
 
         public async Task LeaveProject(string projectId)
         {
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Project_{projectId}");
-            
-            if (_userConnections.TryRemove(Context.ConnectionId, out var data))
-            {
-                // Daca nu mai are alte conexiuni in acelasi proiect (poate are 2 taburi), dam offline
-                bool stillOnline = _userConnections.Values.Any(v => v.ProjectId == projectId && v.Username == data.Username);
-                if (!stillOnline)
-                {
-                    await Clients.Group($"Project_{projectId}").SendAsync("UserLeftProject", data.Username);
-                }
-            }
-        }
-
-        public override async Task OnDisconnectedAsync(Exception? exception)
-        {
-            if (_userConnections.TryRemove(Context.ConnectionId, out var data))
-            {
-                bool stillOnline = _userConnections.Values.Any(v => v.ProjectId == data.ProjectId && v.Username == data.Username);
-                if (!stillOnline)
-                {
-                    await Clients.Group($"Project_{data.ProjectId}").SendAsync("UserLeftProject", data.Username);
-                }
-            }
-            await base.OnDisconnectedAsync(exception);
         }
 
         public async Task NotifyRolesChanged(string projectId, string username, string newRolesCsv)

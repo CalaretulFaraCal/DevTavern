@@ -37,6 +37,7 @@ namespace DevTavern.Client
 
         // Members per project
         private readonly Dictionary<string, ObservableCollection<MemberItem>> _projectMembers = new();
+        private readonly HashSet<string> _globalOnlineUsers = new();
 
         // Notifications
         private readonly Dictionary<int, string> _channelToProject = new();
@@ -175,37 +176,23 @@ namespace DevTavern.Client
                 });
             });
 
-            // Primim notificare cand un utilizator intra pe proiect
-            _hubConnection.On<string>("UserJoinedProject", (username) =>
+            // Primim notificare cand un utilizator intra in aplicatie global
+            _hubConnection.On<string>("UserWentOnline", (username) =>
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
-                    {
-                        var m = members.FirstOrDefault(u => u.Username == username);
-                        if (m != null)
-                        {
-                            m.IsOnline = true;
-                            RefreshMembersList();
-                        }
-                    }
+                    _globalOnlineUsers.Add(username);
+                    RefreshMembersList();
                 });
             });
 
             // Primim notificare cand un utilizator a inchis aplicatia
-            _hubConnection.On<string>("UserLeftProject", (username) =>
+            _hubConnection.On<string>("UserWentOffline", (username) =>
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
-                    {
-                        var m = members.FirstOrDefault(u => u.Username == username);
-                        if (m != null)
-                        {
-                            m.IsOnline = false;
-                            RefreshMembersList();
-                        }
-                    }
+                    _globalOnlineUsers.Remove(username);
+                    RefreshMembersList();
                 });
             });
 
@@ -230,6 +217,9 @@ namespace DevTavern.Client
             { 
                 await _hubConnection.StartAsync(); 
                 ChatSubtitle.Text = "Connected to Taverna Link";
+                
+                var onlineUsers = await _hubConnection.InvokeAsync<List<string>>("GoOnline", _username);
+                foreach(var u in onlineUsers) _globalOnlineUsers.Add(u);
             } 
             catch
             {
@@ -399,19 +389,7 @@ namespace DevTavern.Client
                         {
                             await _hubConnection.InvokeAsync("LeaveProject", oldProjectDbId);
                         }
-                        
-                        // Cand intram pe proiect, anuntam serverul cine suntem ca sa le zica celorlalti ca suntem online
-                        var onlineUsers = await _hubConnection.InvokeAsync<List<string>>("JoinProject", newProjectDbId, _username);
-                        
-                        // Setam "IsOnline = true" pentru cei care ne-a returnat serverul ca sunt DEJA online acum
-                        if (_projectMembers.TryGetValue(selected.name, out var projMembers))
-                        {
-                            foreach(var user in onlineUsers)
-                            {
-                                var m = projMembers.FirstOrDefault(x => x.Username == user);
-                                if (m != null) m.IsOnline = true;
-                            }
-                        }
+                        await _hubConnection.InvokeAsync("JoinProject", newProjectDbId);
                     }
                 }
                 catch { }
@@ -470,6 +448,8 @@ namespace DevTavern.Client
             foreach (var m in baseMembers)
             {
                 if (m.IsHeader) continue; // safety check
+
+                m.IsOnline = _globalOnlineUsers.Contains(m.Username);
 
                 string primaryRole = "ONLINE";
                 if (m.DevRoles != null && m.DevRoles.Count > 0)
