@@ -404,11 +404,11 @@ namespace DevTavern.Client
                         var onlineUsers = await _hubConnection.InvokeAsync<List<string>>("JoinProject", newProjectDbId, _username);
                         
                         // Setam "IsOnline = true" pentru cei care ne-a returnat serverul ca sunt DEJA online acum
-                        if (_projectMembers.TryGetValue(selected.name, out var members))
+                        if (_projectMembers.TryGetValue(selected.name, out var projMembers))
                         {
                             foreach(var user in onlineUsers)
                             {
-                                var m = members.FirstOrDefault(x => x.Username == user);
+                                var m = projMembers.FirstOrDefault(x => x.Username == user);
                                 if (m != null) m.IsOnline = true;
                             }
                         }
@@ -1498,7 +1498,7 @@ namespace DevTavern.Client
             RoleSelectionOverlay.Visibility = Visibility.Collapsed;
         }
 
-        private void SaveRoles_Click(object sender, RoutedEventArgs e)
+        private async void SaveRoles_Click(object sender, RoutedEventArgs e)
         {
             RoleSelectionOverlay.Visibility = Visibility.Collapsed;
 
