@@ -896,6 +896,11 @@ namespace DevTavern.Client
             {
                 if (Keyboard.Modifiers == ModifierKeys.Shift)
                 {
+                    int caretPos = MessageInput.SelectionStart;
+                    int selLen = MessageInput.SelectionLength;
+                    MessageInput.Text = MessageInput.Text.Substring(0, caretPos) + "\n" + MessageInput.Text.Substring(caretPos + selLen);
+                    MessageInput.CaretIndex = caretPos + 1;
+                    e.Handled = true;
                     return;
                 }
 
@@ -1854,7 +1859,7 @@ namespace DevTavern.Client
         {
             _notificationTimer = new System.Windows.Threading.DispatcherTimer
             {
-                Interval = TimeSpan.FromSeconds(20)
+                Interval = TimeSpan.FromSeconds(10)
             };
             _notificationTimer.Tick += async (s, e) => await PollNotificationsAsync();
             _notificationTimer.Start();
@@ -1872,14 +1877,19 @@ namespace DevTavern.Client
                     foreach (var channel in channels)
                     {
                         if (channel.Id == _selectedChannelId) continue;
-                        if (!_lastSeenMessageCount.ContainsKey(channel.Id)) continue;
 
                         try
                         {
                             var resp = await _apiClient.GetStringAsync($"messages/channel/{channel.Id}");
                             var arr = JArray.Parse(resp);
                             int newCount = arr.Count;
-                            int lastSeen = _lastSeenMessageCount[channel.Id];
+
+                            if (!_lastSeenMessageCount.TryGetValue(channel.Id, out int lastSeen))
+                            {
+                                // Prima oara cand vedem canalul — stabilim baseline, fara badge
+                                _lastSeenMessageCount[channel.Id] = newCount;
+                                continue;
+                            }
 
                             if (newCount > lastSeen)
                             {
