@@ -175,6 +175,57 @@ namespace DevTavern.Client
                 });
             });
 
+            // Primim notificare cand un utilizator intra pe proiect
+            _hubConnection.On<string>("UserJoinedProject", (username) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
+                    {
+                        var m = members.FirstOrDefault(u => u.Username == username);
+                        if (m != null)
+                        {
+                            m.IsOnline = true;
+                            RefreshMembersList();
+                        }
+                    }
+                });
+            });
+
+            // Primim notificare cand un utilizator a inchis aplicatia
+            _hubConnection.On<string>("UserLeftProject", (username) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
+                    {
+                        var m = members.FirstOrDefault(u => u.Username == username);
+                        if (m != null)
+                        {
+                            m.IsOnline = false;
+                            RefreshMembersList();
+                        }
+                    }
+                });
+            });
+
+            // Primim notificare live daca cineva ii schimba rolurile unui utilizator
+            _hubConnection.On<string, string>("RolesChanged", (username, newRolesCsv) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
+                    {
+                        var m = members.FirstOrDefault(u => u.Username == username);
+                        if (m != null)
+                        {
+                            m.DevRoles = newRolesCsv.Split(new[] { ", ", "," }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                            RefreshMembersList();
+                        }
+                    }
+                });
+            });
+
             try 
             { 
                 await _hubConnection.StartAsync(); 
@@ -348,7 +399,19 @@ namespace DevTavern.Client
                         {
                             await _hubConnection.InvokeAsync("LeaveProject", oldProjectDbId);
                         }
-                        await _hubConnection.InvokeAsync("JoinProject", newProjectDbId);
+                        
+                        // Cand intram pe proiect, anuntam serverul cine suntem ca sa le zica celorlalti ca suntem online
+                        var onlineUsers = await _hubConnection.InvokeAsync<List<string>>("JoinProject", newProjectDbId, _username);
+                        
+                        // Setam "IsOnline = true" pentru cei care ne-a returnat serverul ca sunt DEJA online acum
+                        if (_projectMembers.TryGetValue(selected.name, out var members))
+                        {
+                            foreach(var user in onlineUsers)
+                            {
+                                var m = members.FirstOrDefault(x => x.Username == user);
+                                if (m != null) m.IsOnline = true;
+                            }
+                        }
                     }
                 }
                 catch { }
@@ -1454,9 +1517,16 @@ namespace DevTavern.Client
                     {
                         try
                         {
-                            var postData = new { Username = _username, DevRoles = string.Join(", ", me.DevRoles) };
+                            string rolesCsv = string.Join(", ", me.DevRoles);
+                            var postData = new { Username = _username, DevRoles = rolesCsv };
                             var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
-                            _apiClient.PostAsync($"projects/{proj.DbId}/roles", content);
+                            var resp = await _apiClient.PostAsync($"projects/{proj.DbId}/roles", content);
+
+                            if (resp.IsSuccessStatusCode && _hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                            {
+                                // Anuntam pe toti colegii live ca rolurile s-au modificat pentru a rescrie design-ul
+                                await _hubConnection.InvokeAsync("NotifyRolesChanged", proj.DbId.ToString(), _username, rolesCsv);
+                            }
                         }
                         catch { }
                     }
