@@ -339,12 +339,73 @@
                          ItemContainerStyle="{StaticResource ChannelItemStyle}">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="#" FontSize="16" Foreground="#8B949E" Margin="0,0,6,0"
-                                           FontWeight="Bold" VerticalAlignment="Center"/>
-                                <TextBlock Text="{Binding Name}" Foreground="#B1BAC4" FontSize="14"
-                                           VerticalAlignment="Center"/>
-                            </StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- "#" + channel name (bold/white when unread) -->
+                                <StackPanel Orientation="Horizontal" Grid.Column="0" VerticalAlignment="Center">
+                                    <!-- Unread dot: Transparent when read, White when unread (always takes space so text doesn't jump) -->
+                                    <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,5,0">
+                                        <Ellipse.Style>
+                                            <Style TargetType="Ellipse">
+                                                <Setter Property="Fill" Value="Transparent"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasUnreadMessages}" Value="True">
+                                                        <Setter Property="Fill" Value="White"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock Text="#" FontSize="16" FontWeight="Bold" Margin="0,0,6,0" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="#8B949E"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasUnreadMessages}" Value="True">
+                                                        <Setter Property="Foreground" Value="#C9D1D9"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding Name}" FontSize="14" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="#8B949E"/>
+                                                <Setter Property="FontWeight" Value="Normal"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasUnreadMessages}" Value="True">
+                                                        <Setter Property="Foreground" Value="#E6EDF3"/>
+                                                        <Setter Property="FontWeight" Value="SemiBold"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+
+                                <!-- Red mention badge -->
+                                <Border Grid.Column="1" CornerRadius="8"
+                                        MinWidth="18" Height="18" Padding="4,0" Margin="4,0,0,0"
+                                        VerticalAlignment="Center" Background="#DA3633">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasMentions}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="{Binding UnreadMentionCount}" FontSize="10" FontWeight="Bold"
+                                               Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </Grid>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
@@ -540,6 +601,30 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <Grid Margin="0,4">
+                                <!-- Date separator -->
+                                <Grid Margin="0,6">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsDateSeparator}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Rectangle Grid.Column="0" Height="1" Fill="#30363D" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding DateLabel}" Margin="12,0"
+                                               FontSize="11" FontWeight="SemiBold" Foreground="#8B949E"
+                                               VerticalAlignment="Center"/>
+                                    <Rectangle Grid.Column="2" Height="1" Fill="#30363D" VerticalAlignment="Center"/>
+                                </Grid>
+
                                 <!-- System message -->
                                 <Border Padding="12,8" CornerRadius="8" HorizontalAlignment="Center" Margin="40,8">
                                     <Border.Style>
@@ -573,8 +658,10 @@
                                             <Setter Property="BorderThickness" Value="4,0,0,0"/>
                                             <Setter Property="BorderBrush" Value="Transparent"/>
                                             <Style.Triggers>
-                                                <!-- If it is a System message, hide the whole border/user message -->
                                                 <DataTrigger Binding="{Binding IsSystemMessage}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsDateSeparator}" Value="True">
                                                     <Setter Property="Visibility" Value="Collapsed"/>
                                                 </DataTrigger>
                                                 <!-- If a user is mentioned, highlight the message -->
@@ -670,9 +757,18 @@
                                                         </Style.Triggers>
                                                     </Style>
                                                 </Border.Style>
-                                                <ScrollViewer MaxHeight="250" VerticalScrollBarVisibility="Auto">
-                                                    <TextBlock Text="{Binding CodeSelectedText}" FontFamily="Consolas, Courier New" FontSize="13" Foreground="#C9D1D9" TextWrapping="NoWrap"/>
-                                                </ScrollViewer>
+                                                <avalonedit:TextEditor
+                                                    local:AvalonEditHelper.FileExtension="{Binding CodeFileExtension}"
+                                                    local:AvalonEditHelper.BindableText="{Binding CodeSelectedText}"
+                                                    IsReadOnly="True"
+                                                    ShowLineNumbers="False"
+                                                    MaxHeight="250"
+                                                    HorizontalScrollBarVisibility="Auto"
+                                                    VerticalScrollBarVisibility="Auto"
+                                                    Background="#0D1117"
+                                                    Foreground="#C9D1D9"
+                                                    FontFamily="Consolas, Courier New"
+                                                    FontSize="13"/>
                                             </Border>
                                         </StackPanel>
                                     </StackPanel>

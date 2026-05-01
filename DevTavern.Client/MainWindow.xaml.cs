@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -114,6 +116,11 @@ namespace DevTavern.Client
                 {
                     if (senderUsername == _username) return;
 
+                    DateTime now = DateTime.Now;
+                    var lastReal = Messages.LastOrDefault(m => !m.IsDateSeparator && !m.IsSystemMessage);
+                    if (lastReal == null || lastReal.MessageDate.Date != now.Date)
+                        Messages.Add(new ChatMessage { IsDateSeparator = true, DateLabel = FormatDateLabel(now.Date) });
+
                     Messages.Add(ParseMessageContent(new ChatMessage
                     {
                         Username = senderUsername,
@@ -122,16 +129,42 @@ namespace DevTavern.Client
                         UsernameColor = "#E6EDF3",
                         AvatarUrl = string.IsNullOrEmpty(senderAvatarUrl) ? null : senderAvatarUrl,
                         Content = messageContent,
-                        Timestamp = DateTime.Now.ToString("HH:mm"),
+                        Timestamp = now.ToString("HH:mm"),
                         IsSystemMessage = false,
-                        IsMentioningMe = messageContent.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
+                        IsMentioningMe = messageContent.Contains("@" + _username, StringComparison.OrdinalIgnoreCase),
+                        MessageDate = now
                     }));
                     // Tine lastSeenMessageCount sincronizat pentru canalul activ
                     if (_lastSeenMessageCount.ContainsKey(_selectedChannelId))
-                        _lastSeenMessageCount[_selectedChannelId] = Messages.Count;
+                        _lastSeenMessageCount[_selectedChannelId] = Messages.Count(m => !m.IsSystemMessage && !m.IsDateSeparator);
 
                     Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
                         System.Windows.Threading.DispatcherPriority.Background);
+                });
+            });
+
+            // Notificare real-time cand cineva trimite un mesaj pe alt canal din proiect
+            _hubConnection.On<int, string, string>("ChannelMessageReceived", (channelId, senderUsername, content) =>
+            {
+                if (senderUsername == _username) return;
+                if (channelId == _selectedChannelId) return;
+
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    ChannelItem? targetChannel = null;
+                    string? targetProject = null;
+                    foreach (var kvp in _projectChannels)
+                    {
+                        var ch = kvp.Value.FirstOrDefault(c => c.Id == channelId);
+                        if (ch != null) { targetChannel = ch; targetProject = kvp.Key; break; }
+                    }
+                    if (targetChannel == null) return;
+
+                    targetChannel.HasUnreadMessages = true;
+                    if (content.Contains("@" + _username, StringComparison.OrdinalIgnoreCase))
+                        targetChannel.UnreadMentionCount++;
+
+                    UpdateProjectBadge(targetProject ?? "");
                 });
             });
 
@@ -556,15 +589,20 @@ namespace DevTavern.Client
                 {
                     var mResp = await _apiClient.GetStringAsync($"messages/channel/{selectedChannel.Id}");
                     var mArr = JArray.Parse(mResp);
+                    DateTime? prevMsgDate = null;
                     foreach (var m in mArr)
                     {
                         string content = m["content"]?.ToString() ?? "";
-                        string time = "";
-                        try
+                        DateTime msgLocalTime = DateTime.Now;
+                        try { msgLocalTime = m["sentAt"]?.ToObject<DateTime>().ToLocalTime() ?? DateTime.Now; }
+                        catch { }
+                        string time = msgLocalTime.ToString("HH:mm");
+
+                        if (!prevMsgDate.HasValue || msgLocalTime.Date != prevMsgDate.Value)
                         {
-                            time = m["sentAt"]?.ToObject<DateTime>().ToLocalTime().ToString("HH:mm") ?? "";
+                            Messages.Add(new ChatMessage { IsDateSeparator = true, DateLabel = FormatDateLabel(msgLocalTime.Date) });
+                            prevMsgDate = msgLocalTime.Date;
                         }
-                        catch { time = DateTime.Now.ToString("HH:mm"); }
 
                         // Serverul nu include navigation properties (User) => user va fi null
                         // Verificam daca userId corespunde utilizatorului curent
@@ -594,7 +632,8 @@ namespace DevTavern.Client
                             Content = content,
                             Timestamp = time,
                             IsSystemMessage = false,
-                            IsMentioningMe = content.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
+                            IsMentioningMe = content.Contains("@" + _username, StringComparison.OrdinalIgnoreCase),
+                            MessageDate = msgLocalTime
                         }));
                     }
                 }
@@ -619,7 +658,7 @@ namespace DevTavern.Client
                     var readCh = chList.FirstOrDefault(c => c.Id == _selectedChannelId);
                     if (readCh != null) { readCh.UnreadMentionCount = 0; readCh.HasUnreadMessages = false; }
                 }
-                _lastSeenMessageCount[_selectedChannelId] = Messages.Count;
+                _lastSeenMessageCount[_selectedChannelId] = Messages.Count(m => !m.IsSystemMessage && !m.IsDateSeparator);
                 UpdateProjectBadge(_selectedProject ?? "");
 
                 MessageInput.Focus();
@@ -897,6 +936,11 @@ namespace DevTavern.Client
             if (string.IsNullOrEmpty(text) || _selectedProject == null || _selectedChannelId == 0) return;
 
             // Afisam mesajul local imediat (optimistic UI)
+            DateTime sendTime = DateTime.Now;
+            var lastReal = Messages.LastOrDefault(m => !m.IsDateSeparator && !m.IsSystemMessage);
+            if (lastReal == null || lastReal.MessageDate.Date != sendTime.Date)
+                Messages.Add(new ChatMessage { IsDateSeparator = true, DateLabel = FormatDateLabel(sendTime.Date) });
+
             Messages.Add(ParseMessageContent(new ChatMessage
             {
                 Username = _username,
@@ -905,9 +949,10 @@ namespace DevTavern.Client
                 UsernameColor = "#238636",
                 AvatarUrl = string.IsNullOrEmpty(_avatarUrl) ? null : _avatarUrl,
                 Content = text,
-                Timestamp = DateTime.Now.ToString("HH:mm"),
+                Timestamp = sendTime.ToString("HH:mm"),
                 IsSystemMessage = false,
-                IsMentioningMe = text.Contains("@" + _username, StringComparison.OrdinalIgnoreCase)
+                IsMentioningMe = text.Contains("@" + _username, StringComparison.OrdinalIgnoreCase),
+                MessageDate = sendTime
             }));
 
             await Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
@@ -1704,6 +1749,14 @@ namespace DevTavern.Client
 
             ImportProjectsOverlay.Visibility = Visibility.Collapsed;
         }
+        private static string FormatDateLabel(DateTime date)
+        {
+            DateTime today = DateTime.Today;
+            if (date == today) return "Today";
+            if (date == today.AddDays(-1)) return "Yesterday";
+            return date.ToString("dddd, MMMM d");
+        }
+
         private ChatMessage ParseMessageContent(ChatMessage msg)
         {
             msg.DisplayContent = msg.Content;
@@ -1917,14 +1970,38 @@ namespace DevTavern.Client
         public string CodeBranch { get; set; } = "";
         public string CodeSelectedText { get; set; } = "";
         public string DisplayContent { get; set; } = "";
+        public string CodeFileExtension => string.IsNullOrEmpty(CodeFilePath)
+            ? ""
+            : System.IO.Path.GetExtension(CodeFilePath);
+
+        public bool IsDateSeparator { get; set; } = false;
+        public string DateLabel { get; set; } = "";
+        public DateTime MessageDate { get; set; } = DateTime.MinValue;
     }
 
-    public class ChannelItem
+    public class ChannelItem : INotifyPropertyChanged
     {
         public int Id { get; set; }
         public string Name { get; set; } = "";
-        public int UnreadMentionCount { get; set; }
-        public bool HasUnreadMessages { get; set; }
+
+        private int _unreadMentionCount;
+        public int UnreadMentionCount
+        {
+            get => _unreadMentionCount;
+            set { _unreadMentionCount = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasMentions)); }
+        }
+        public bool HasMentions => _unreadMentionCount > 0;
+
+        private bool _hasUnreadMessages;
+        public bool HasUnreadMessages
+        {
+            get => _hasUnreadMessages;
+            set { _hasUnreadMessages = value; OnPropertyChanged(); }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? propName = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
     }
 
     public class MemberItem
@@ -2023,6 +2100,40 @@ namespace DevTavern.Client
                     }
                 }
             }
+        }
+    }
+
+    public static class AvalonEditHelper
+    {
+        public static readonly DependencyProperty BindableTextProperty =
+            DependencyProperty.RegisterAttached("BindableText", typeof(string), typeof(AvalonEditHelper),
+                new PropertyMetadata(null, OnBindableTextChanged));
+
+        public static readonly DependencyProperty FileExtensionProperty =
+            DependencyProperty.RegisterAttached("FileExtension", typeof(string), typeof(AvalonEditHelper),
+                new PropertyMetadata(null, OnFileExtensionChanged));
+
+        public static string? GetBindableText(DependencyObject obj) => (string?)obj.GetValue(BindableTextProperty);
+        public static void SetBindableText(DependencyObject obj, string? value) => obj.SetValue(BindableTextProperty, value);
+
+        public static string? GetFileExtension(DependencyObject obj) => (string?)obj.GetValue(FileExtensionProperty);
+        public static void SetFileExtension(DependencyObject obj, string? value) => obj.SetValue(FileExtensionProperty, value);
+
+        private static void OnBindableTextChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is ICSharpCode.AvalonEdit.TextEditor editor)
+                editor.Text = (string?)e.NewValue ?? "";
+        }
+
+        private static void OnFileExtensionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (d is not ICSharpCode.AvalonEdit.TextEditor editor) return;
+            string ext = (string?)e.NewValue ?? "";
+            if (!string.IsNullOrEmpty(ext))
+                editor.SyntaxHighlighting = ICSharpCode.AvalonEdit.Highlighting.HighlightingManager.Instance.GetDefinitionByExtension(ext);
+            editor.TextArea.Caret.CaretBrush = Brushes.Transparent;
+            if (!editor.TextArea.TextView.LineTransformers.OfType<DarkModeColorizer>().Any())
+                editor.TextArea.TextView.LineTransformers.Add(new DarkModeColorizer());
         }
     }
 }
