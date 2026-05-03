@@ -102,6 +102,28 @@
             </Setter>
         </Style>
 
+        <!-- Voice channel list item style -->
+        <Style x:Key="VoiceChannelItemStyle" TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="ItemBg" CornerRadius="4" Padding="8,6" Background="Transparent" Margin="4,0">
+                            <ContentPresenter HorizontalAlignment="Stretch"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ItemBg" Property="Background" Value="#1C2333"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Members list item style -->
         <Style x:Key="MemberItemStyle" TargetType="ListBoxItem">
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -118,6 +140,206 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Dark ComboBox for voice settings -->
+        <Style x:Key="DarkComboBox" TargetType="ComboBox">
+            <Setter Property="Background" Value="#0D1117"/>
+            <Setter Property="Foreground" Value="#E6EDF3"/>
+            <Setter Property="BorderBrush" Value="#30363D"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ComboBoxItem">
+                        <Setter Property="Foreground" Value="#E6EDF3"/>
+                        <Setter Property="Background" Value="#161B22"/>
+                        <Setter Property="Padding" Value="10,6"/>
+                        <Setter Property="FontSize" Value="13"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ComboBoxItem">
+                                    <Border x:Name="ItemBg" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsHighlighted" Value="True">
+                                            <Setter TargetName="ItemBg" Property="Background" Value="#1C2333"/>
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="ItemBg" Property="Background" Value="#1C2333"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="ToggleButton" Focusable="False"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="TgBorder" Background="#0D1117" BorderBrush="#30363D"
+                                                BorderThickness="1" CornerRadius="6">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="28"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Path Grid.Column="1" Data="M7,10L12,15L17,10Z" Fill="#8B949E"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="TgBorder" Property="BorderBrush" Value="#8B949E"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="TgBorder" Property="BorderBrush" Value="#238636"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="ContentSite" IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              Margin="12,0,32,0" VerticalAlignment="Center"/>
+                            <Popup x:Name="Popup" Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True" Focusable="False">
+                                <Border MinWidth="{TemplateBinding ActualWidth}" MaxHeight="220"
+                                        Background="#161B22" BorderBrush="#30363D" BorderThickness="1"
+                                        CornerRadius="6" Margin="0,2,0,0">
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="12" ShadowDepth="4" Opacity="0.4" Color="Black"/>
+                                    </Border.Effect>
+                                    <ScrollViewer>
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Slim slider for voice settings -->
+        <Style x:Key="VoiceSlider" TargetType="Slider">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Height="20">
+                            <Track x:Name="PART_Track" VerticalAlignment="Center">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="4" Background="#238636" CornerRadius="2,0,0,2"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Ellipse Width="14" Height="14" Fill="White"/>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="4" Background="#30363D" CornerRadius="0,2,2,0"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Toggle switch (CheckBox) for voice settings -->
+        <Style x:Key="ToggleSwitchStyle" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#C9D1D9"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid Height="24">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="40"/>
+                            </Grid.ColumnDefinitions>
+                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center"/>
+                            <Border x:Name="Track" Grid.Column="1" Width="40" Height="22"
+                                    CornerRadius="11" Background="#30363D">
+                                <Ellipse x:Name="Thumb" Width="16" Height="16" Fill="White"
+                                         HorizontalAlignment="Left" VerticalAlignment="Center"
+                                         Margin="3,0,0,0"/>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="#238636"/>
+                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/>
+                                <Setter TargetName="Thumb" Property="Margin" Value="0,0,3,0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Radio button for voice detection mode -->
+        <Style x:Key="VoiceRadioStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#C9D1D9"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="Outer" Width="18" Height="18" CornerRadius="9"
+                                    BorderBrush="#30363D" BorderThickness="2" Background="Transparent"
+                                    VerticalAlignment="Center" Margin="0,0,10,0">
+                                <Ellipse x:Name="Inner" Width="8" Height="8" Fill="#238636" Visibility="Collapsed"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ContentPresenter Grid.Column="1" VerticalAlignment="Center"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Outer" Property="BorderBrush" Value="#238636"/>
+                                <Setter TargetName="Inner" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Outer" Property="BorderBrush" Value="#8B949E"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </Window.Resources>
 
     <Grid>
@@ -267,9 +489,9 @@
         <Border Grid.Column="1" Grid.Row="0" Background="#161B22" BorderBrush="#30363D" BorderThickness="0,0,1,0">
             <Grid>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>  <!-- Project name header -->
-                    <RowDefinition Height="Auto"/>  <!-- Channels label + add btn -->
-                    <RowDefinition Height="*"/>     <!-- Channel list -->
+                    <RowDefinition Height="Auto"/>  <!-- Project name header (sticky) -->
+                    <RowDefinition Height="*"/>     <!-- Scrollable channel sections -->
+                    <RowDefinition Height="Auto"/>  <!-- Voice connected bar (sticky bottom) -->
                 </Grid.RowDefinitions>
 
                 <!-- Project Name Header -->
@@ -281,7 +503,6 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="SelectedProjectName" Text="Home" FontSize="15" FontWeight="Bold"
                                    Foreground="#E6EDF3" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                        
                         <!-- Set Roles button -->
                         <Button Grid.Column="1" Cursor="Hand" Click="SetRoleButton_Click" ToolTip="Set Roles" Margin="8,0,0,0" Width="24" Height="24">
                             <Button.Template>
@@ -303,112 +524,308 @@
                     </Grid>
                 </Border>
 
-                <!-- Channels section header -->
-                <Grid x:Name="ChannelsSectionHeader" Grid.Row="1" Margin="16,12,16,4" Visibility="Collapsed">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="CHANNELS" FontSize="11" FontWeight="SemiBold" Foreground="#8B949E"
-                               VerticalAlignment="Center"/>
-                    <Button x:Name="AddChannelButton" Grid.Column="1" Content="+" FontSize="16" FontWeight="Bold"
-                            Foreground="#8B949E" Background="Transparent" BorderThickness="0"
-                            Width="22" Height="22" Cursor="Hand" Click="AddChannelButton_Click"
-                            VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
-                            ToolTip="Add Channel">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border x:Name="BtnBg" CornerRadius="4" Background="Transparent"
-                                        Width="22" Height="22">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter TargetName="BtnBg" Property="Background" Value="#30363D"/>
-                                        <Setter Property="Foreground" Value="#E6EDF3"/>
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Button.Template>
-                    </Button>
-                </Grid>
+                <!-- Scrollable channel sections -->
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
 
-                <!-- Channel list -->
-                <ListBox x:Name="ChannelList" Grid.Row="2" Background="Transparent" BorderThickness="0"
-                         SelectionChanged="ChannelList_SelectionChanged" Padding="4,0"
-                         ItemContainerStyle="{StaticResource ChannelItemStyle}">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
+                        <!-- TEXT CHANNELS header -->
+                        <Grid x:Name="ChannelsSectionHeader" Margin="16,12,16,4" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="TEXT CHANNELS" FontSize="11" FontWeight="SemiBold" Foreground="#8B949E"
+                                       VerticalAlignment="Center"/>
+                            <Button x:Name="AddChannelButton" Grid.Column="1" Content="+" FontSize="16" FontWeight="Bold"
+                                    Foreground="#8B949E" Background="Transparent" BorderThickness="0"
+                                    Width="22" Height="22" Cursor="Hand" Click="AddChannelButton_Click"
+                                    VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
+                                    ToolTip="Add Channel">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="BtnBg" CornerRadius="4" Background="Transparent" Width="22" Height="22">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="BtnBg" Property="Background" Value="#30363D"/>
+                                                <Setter Property="Foreground" Value="#E6EDF3"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                        </Grid>
 
-                                <!-- "#" + channel name (bold/white when unread) -->
-                                <StackPanel Orientation="Horizontal" Grid.Column="0" VerticalAlignment="Center">
-                                    <!-- Unread dot: Transparent when read, White when unread (always takes space so text doesn't jump) -->
-                                    <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,5,0">
-                                        <Ellipse.Style>
-                                            <Style TargetType="Ellipse">
-                                                <Setter Property="Fill" Value="Transparent"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding HasUnreadMessages}" Value="True">
-                                                        <Setter Property="Fill" Value="White"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Ellipse.Style>
-                                    </Ellipse>
-                                    <TextBlock Text="#" FontSize="16" FontWeight="Bold" Margin="0,0,6,0" VerticalAlignment="Center">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="#8B949E"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding HasUnreadMessages}" Value="True">
-                                                        <Setter Property="Foreground" Value="#C9D1D9"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                    <TextBlock Text="{Binding Name}" FontSize="14" VerticalAlignment="Center">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Foreground" Value="#8B949E"/>
-                                                <Setter Property="FontWeight" Value="Normal"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding HasUnreadMessages}" Value="True">
-                                                        <Setter Property="Foreground" Value="#E6EDF3"/>
-                                                        <Setter Property="FontWeight" Value="SemiBold"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                </StackPanel>
+                        <!-- Text channel list -->
+                        <ListBox x:Name="ChannelList" Background="Transparent" BorderThickness="0"
+                                 SelectionChanged="ChannelList_SelectionChanged" Padding="4,0"
+                                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                 ItemContainerStyle="{StaticResource ChannelItemStyle}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Orientation="Horizontal" Grid.Column="0" VerticalAlignment="Center">
+                                            <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,5,0">
+                                                <Ellipse.Style>
+                                                    <Style TargetType="Ellipse">
+                                                        <Setter Property="Fill" Value="Transparent"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasUnreadMessages}" Value="True">
+                                                                <Setter Property="Fill" Value="White"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Ellipse.Style>
+                                            </Ellipse>
+                                            <TextBlock Text="#" FontSize="16" FontWeight="Bold" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="#8B949E"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasUnreadMessages}" Value="True">
+                                                                <Setter Property="Foreground" Value="#C9D1D9"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Name}" FontSize="14" VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="#8B949E"/>
+                                                        <Setter Property="FontWeight" Value="Normal"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasUnreadMessages}" Value="True">
+                                                                <Setter Property="Foreground" Value="#E6EDF3"/>
+                                                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </StackPanel>
+                                        <!-- Red mention badge -->
+                                        <Border Grid.Column="1" CornerRadius="8"
+                                                MinWidth="18" Height="18" Padding="4,0" Margin="4,0,0,0"
+                                                VerticalAlignment="Center" Background="#DA3633">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasMentions}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding UnreadMentionCount}" FontSize="10" FontWeight="Bold"
+                                                       Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
 
-                                <!-- Red mention badge -->
-                                <Border Grid.Column="1" CornerRadius="8"
-                                        MinWidth="18" Height="18" Padding="4,0" Margin="4,0,0,0"
-                                        VerticalAlignment="Center" Background="#DA3633">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding HasMentions}" Value="True">
-                                                    <Setter Property="Visibility" Value="Visible"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <TextBlock Text="{Binding UnreadMentionCount}" FontSize="10" FontWeight="Bold"
-                                               Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                        <!-- VOICE CHANNELS header -->
+                        <Grid x:Name="VoiceChannelsSectionHeader" Margin="16,12,16,4" Visibility="Collapsed">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="VOICE CHANNELS" FontSize="11" FontWeight="SemiBold" Foreground="#8B949E"
+                                       VerticalAlignment="Center"/>
+                            <Button x:Name="AddVoiceChannelButton" Grid.Column="1" Content="+" FontSize="16" FontWeight="Bold"
+                                    Foreground="#8B949E" Background="Transparent" BorderThickness="0"
+                                    Width="22" Height="22" Cursor="Hand" Click="AddVoiceChannelButton_Click"
+                                    VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
+                                    ToolTip="Add Voice Channel">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="BtnBg" CornerRadius="4" Background="Transparent" Width="22" Height="22">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="BtnBg" Property="Background" Value="#30363D"/>
+                                                <Setter Property="Foreground" Value="#E6EDF3"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                        </Grid>
+
+                        <!-- Voice channel list -->
+                        <ListBox x:Name="VoiceChannelList" Background="Transparent" BorderThickness="0"
+                                 Padding="4,0" Visibility="Collapsed"
+                                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                 ItemContainerStyle="{StaticResource VoiceChannelItemStyle}"
+                                 SelectionChanged="VoiceChannelList_SelectionChanged"
+                                 PreviewMouseRightButtonDown="VoiceChannelList_PreviewMouseRightButtonDown">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <!-- Channel row -->
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Orientation="Horizontal" Grid.Column="0" VerticalAlignment="Center">
+                                                <Path Stretch="Uniform" Width="14" Height="14" Margin="0,0,6,0" VerticalAlignment="Center"
+                                                      Data="M3,9V15H7L12,20V4L7,9H3M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12Z">
+                                                    <Path.Style>
+                                                        <Style TargetType="Path">
+                                                            <Setter Property="Fill" Value="#8B949E"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsJoined}" Value="True">
+                                                                    <Setter Property="Fill" Value="#3FB950"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Path.Style>
+                                                </Path>
+                                                <TextBlock Text="{Binding Name}" FontSize="14" VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="#8B949E"/>
+                                                            <Setter Property="FontWeight" Value="Normal"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsJoined}" Value="True">
+                                                                    <Setter Property="Foreground" Value="#3FB950"/>
+                                                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <!-- Mic indicator when joined -->
+                                            <Path Grid.Column="1" Stretch="Uniform" Width="12" Height="12" VerticalAlignment="Center"
+                                                  Data="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z"
+                                                  Fill="#3FB950">
+                                                <Path.Style>
+                                                    <Style TargetType="Path">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsJoined}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Path.Style>
+                                            </Path>
+                                        </Grid>
+                                        <!-- Members in this voice channel -->
+                                        <ItemsControl ItemsSource="{Binding VoiceMembers}" Margin="20,2,0,2">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Orientation="Horizontal" Margin="0,2" VerticalAlignment="Center">
+                                                        <!-- Person icon -->
+                                                        <Path Data="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"
+                                                              Fill="#8B949E" Stretch="Uniform" Width="12" Height="12"
+                                                              Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                                        <!-- Username -->
+                                                        <TextBlock Text="{Binding Username}" FontSize="12" Foreground="#8B949E" VerticalAlignment="Center"/>
+                                                        <!-- Muted indicator -->
+                                                        <Path Data="M19,11C19,12.19 18.66,13.3 18.1,14.28L16.87,13.05C17.14,12.43 17.3,11.74 17.3,11H19M15,11.16L9,5.18V5A3,3 0 0,1 12,2A3,3 0 0,1 15,5V11L15,11.16M4.27,3L21,19.73L19.73,21L15.54,16.81C14.77,17.27 13.91,17.58 13,17.72V21H11V17.72C7.72,17.23 5,14.41 5,11H6.7C6.7,14 9.24,16.1 12,16.1C12.81,16.1 13.6,15.91 14.31,15.58L12.65,13.92L12,14A3,3 0 0,1 9,11V10.27L4.27,3Z"
+                                                              Fill="#DA3633" Stretch="Uniform" Width="10" Height="10"
+                                                              Margin="4,0,0,0" VerticalAlignment="Center"
+                                                              Visibility="{Binding IsMuted, Converter={StaticResource BoolToVis}}"/>
+                                                        <!-- Deafened indicator -->
+                                                        <Path Data="M12,1C7,1 3,5 3,10V17A3,3 0 0,0 6,20H9V12H5V10A7,7 0 0,1 12,3A7,7 0 0,1 19,10V12H15V20H18A3,3 0 0,0 21,17V10C21,5 16.97,1 12,1Z"
+                                                              Fill="#DA3633" Stretch="Uniform" Width="10" Height="10"
+                                                              Margin="2,0,0,0" VerticalAlignment="Center"
+                                                              Visibility="{Binding IsDeafened, Converter={StaticResource BoolToVis}}"/>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Voice connected bar (sticky bottom) -->
+                <Border x:Name="VoiceConnectedBar" Grid.Row="2" Background="#1C2333"
+                        BorderBrush="#30363D" BorderThickness="0,1,0,0"
+                        Padding="10,8" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <!-- Status text -->
+                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                            <TextBlock Text="Voice Connected" FontSize="11" FontWeight="SemiBold" Foreground="#3FB950"/>
+                            <TextBlock x:Name="VoiceConnectedChannelName" FontSize="11" Foreground="#8B949E" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                        <!-- Controls: mute, deafen, leave -->
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <!-- Mute button -->
+                            <Button Cursor="Hand" Click="MuteVoice_Click" ToolTip="Mute" VerticalAlignment="Center">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="Bg" CornerRadius="4" Background="Transparent" Padding="5,4">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bg" Property="Background" Value="#30363D"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                <Path x:Name="MuteIcon"
+                                      Data="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z"
+                                      Fill="#8B949E" Stretch="Uniform" Width="14" Height="14"/>
+                            </Button>
+                            <!-- Deafen button -->
+                            <Button Cursor="Hand" Click="DeafenVoice_Click" ToolTip="Deafen" VerticalAlignment="Center">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="Bg" CornerRadius="4" Background="Transparent" Padding="5,4">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bg" Property="Background" Value="#30363D"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                <Path x:Name="DeafenIcon"
+                                      Data="M12,1C7,1 3,5 3,10V17A3,3 0 0,0 6,20H9V12H5V10A7,7 0 0,1 12,3A7,7 0 0,1 19,10V12H15V20H18A3,3 0 0,0 21,17V10C21,5 16.97,1 12,1Z"
+                                      Fill="#8B949E" Stretch="Uniform" Width="14" Height="14"/>
+                            </Button>
+                            <!-- Leave button -->
+                            <Button Cursor="Hand" Click="LeaveVoiceChannel_Click" ToolTip="Disconnect" VerticalAlignment="Center">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="LeaveBg" CornerRadius="4" Background="Transparent" Padding="5,4">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="LeaveBg" Property="Background" Value="#DA3633"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                <Path Data="M19,3H5C3.89,3 3,3.89 3,5V9H5V5H19V19H5V15H3V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3M10.08,15.58L11.5,17L16.5,12L11.5,7L10.08,8.41L12.67,11H3V13H12.67L10.08,15.58Z"
+                                      Fill="#8B949E" Stretch="Uniform" Width="14" Height="14"/>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </Border>
 
             </Grid>
         </Border>
@@ -1275,6 +1692,23 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <!-- Voice Settings button -->
+                    <Button Cursor="Hand" Click="VoiceSettingsButton_Click" ToolTip="Voice Settings" Margin="0,0,4,0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="VsBg" CornerRadius="6" Background="Transparent" Width="30" Height="30">
+                                    <Path Data="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.04 4.95,18.95L7.44,17.95C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.95L19.05,18.95C19.27,19.04 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"
+                                          Fill="#8B949E" Stretch="Uniform" Width="16" Height="16"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="VsBg" Property="Background" Value="#30363D"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
                     <!-- Logout button -->
                     <Button Cursor="Hand" Click="LogoutButton_Click" ToolTip="Logout">
                         <Button.Template>
@@ -1377,6 +1811,253 @@
                             </Button.Foreground>
                         </Button>
                     </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ========== ADD VOICE CHANNEL POPUP OVERLAY ========== -->
+        <Grid x:Name="AddVoiceChannelOverlay" Grid.ColumnSpan="5" Grid.RowSpan="2" Visibility="Collapsed">
+            <!-- Dark backdrop -->
+            <Border Background="#80000000" MouseDown="AddVoiceChannelOverlay_MouseDown"/>
+
+            <!-- Popup dialog -->
+            <Border Width="400" Height="200" Background="#161B22" CornerRadius="12"
+                    BorderBrush="#30363D" BorderThickness="1" HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+                <Grid Margin="24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="Create Voice Channel" FontSize="18" FontWeight="Bold"
+                               Foreground="#E6EDF3" Margin="0,0,0,4"/>
+                    <TextBlock Grid.Row="1" Text="Enter a name for the new voice channel" FontSize="12"
+                               Foreground="#8B949E" Margin="0,0,0,16"/>
+
+                    <Border Grid.Row="2" CornerRadius="6" Background="#0D1117" BorderBrush="#30363D"
+                            BorderThickness="1" Padding="2" VerticalAlignment="Center">
+                        <TextBox x:Name="NewVoiceChannelNameInput" Background="Transparent" BorderThickness="0"
+                                 Foreground="#E6EDF3" FontSize="14" Padding="10,8"
+                                 VerticalContentAlignment="Center"
+                                 KeyDown="NewVoiceChannelNameInput_KeyDown">
+                            <TextBox.CaretBrush>
+                                <SolidColorBrush Color="#E6EDF3"/>
+                            </TextBox.CaretBrush>
+                        </TextBox>
+                    </Border>
+
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                        <Button Content="Cancel" Padding="16,8" Margin="0,0,8,0" Cursor="Hand"
+                                Click="CancelAddVoiceChannel_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="CancelBg" CornerRadius="6" Background="Transparent"
+                                            BorderBrush="#30363D" BorderThickness="1" Padding="16,8">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="CancelBg" Property="Background" Value="#1C2333"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                            <Button.Foreground>
+                                <SolidColorBrush Color="#8B949E"/>
+                            </Button.Foreground>
+                        </Button>
+                        <Button Content="Create" Padding="16,8" Cursor="Hand"
+                                Click="ConfirmAddVoiceChannel_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="CreateBg" CornerRadius="6" Padding="16,8">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                <GradientStop Color="#238636" Offset="0"/>
+                                                <GradientStop Color="#2EA043" Offset="1"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="CreateBg" Property="Opacity" Value="0.85"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                            <Button.Foreground>
+                                <SolidColorBrush Color="White"/>
+                            </Button.Foreground>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ========== VOICE SETTINGS OVERLAY ========== -->
+        <Grid x:Name="VoiceSettingsOverlay" Grid.ColumnSpan="5" Grid.RowSpan="2" Visibility="Collapsed">
+            <Border Background="#80000000" MouseDown="VoiceSettingsOverlay_MouseDown"/>
+            <Border Width="520" Background="#161B22" CornerRadius="12"
+                    BorderBrush="#30363D" BorderThickness="1"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" MaxHeight="680">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Header -->
+                    <Border Grid.Row="0" Padding="24,20,24,16" BorderBrush="#30363D" BorderThickness="0,0,0,1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Voice Settings" FontSize="18" FontWeight="Bold" Foreground="#E6EDF3"/>
+                                <TextBlock Text="Configure audio for voice channels" FontSize="12" Foreground="#8B949E" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Click="CloseVoiceSettings_Click" Cursor="Hand"
+                                    Width="28" Height="28" VerticalAlignment="Center">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="CloseBg" CornerRadius="6" Background="Transparent">
+                                            <Path Data="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"
+                                                  Fill="#8B949E" Stretch="Uniform" Width="14" Height="14"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="CloseBg" Property="Background" Value="#30363D"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <!-- Scrollable content -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="24,0,24,24">
+                        <StackPanel>
+
+                            <!-- ─── DEVICES ─── -->
+                            <TextBlock Text="DEVICES" FontSize="11" FontWeight="SemiBold"
+                                       Foreground="#8B949E" Margin="0,20,0,10"/>
+
+                            <TextBlock Text="Input Device (microphone)" FontSize="12"
+                                       Foreground="#8B949E" Margin="0,0,0,6"/>
+                            <ComboBox x:Name="InputDeviceCombo" Style="{StaticResource DarkComboBox}" Margin="0,0,0,14"/>
+
+                            <TextBlock Text="Output Device (speakers)" FontSize="12"
+                                       Foreground="#8B949E" Margin="0,0,0,6"/>
+                            <ComboBox x:Name="OutputDeviceCombo" Style="{StaticResource DarkComboBox}"/>
+
+                            <!-- ─── VOLUME ─── -->
+                            <Border Height="1" Background="#21262D" Margin="0,20,0,0"/>
+                            <TextBlock Text="VOLUME" FontSize="11" FontWeight="SemiBold"
+                                       Foreground="#8B949E" Margin="0,16,0,10"/>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="40"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Input Volume" FontSize="12" Foreground="#8B949E" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" FontSize="12" Foreground="#E6EDF3" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           Text="{Binding Value, ElementName=InputVolumeSlider, StringFormat={}{0:F0}%}"/>
+                            </Grid>
+                            <Slider x:Name="InputVolumeSlider" Style="{StaticResource VoiceSlider}"
+                                    Minimum="0" Maximum="200" Value="100" Margin="0,0,0,16"/>
+
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="40"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Output Volume" FontSize="12" Foreground="#8B949E" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" FontSize="12" Foreground="#E6EDF3" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           Text="{Binding Value, ElementName=OutputVolumeSlider, StringFormat={}{0:F0}%}"/>
+                            </Grid>
+                            <Slider x:Name="OutputVolumeSlider" Style="{StaticResource VoiceSlider}"
+                                    Minimum="0" Maximum="200" Value="100"/>
+
+                            <!-- ─── VOICE DETECTION ─── -->
+                            <Border Height="1" Background="#21262D" Margin="0,20,0,0"/>
+                            <TextBlock Text="VOICE DETECTION" FontSize="11" FontWeight="SemiBold"
+                                       Foreground="#8B949E" Margin="0,16,0,12"/>
+
+                            <RadioButton x:Name="VadModeRadio" Content="Voice Activity (VAD)"
+                                         GroupName="VoiceMode" IsChecked="True"
+                                         Style="{StaticResource VoiceRadioStyle}"
+                                         Checked="VadMode_Checked" Margin="0,0,0,10"/>
+                            <RadioButton x:Name="PttModeRadio" Content="Push to Talk (PTT)"
+                                         GroupName="VoiceMode"
+                                         Style="{StaticResource VoiceRadioStyle}"
+                                         Checked="PttMode_Checked"/>
+
+                            <!-- Sensitivity (VAD only) -->
+                            <StackPanel x:Name="SensitivityPanel" Margin="0,14,0,0">
+                                <Grid Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="40"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Input Sensitivity" FontSize="12" Foreground="#8B949E" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1" FontSize="12" Foreground="#E6EDF3" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                               Text="{Binding Value, ElementName=SensitivitySlider, StringFormat={}{0:F0}%}"/>
+                                </Grid>
+                                <Slider x:Name="SensitivitySlider" Style="{StaticResource VoiceSlider}"
+                                        Minimum="0" Maximum="100" Value="50"/>
+                                <TextBlock Text="Your voice will automatically activate the microphone above the set threshold."
+                                           FontSize="11" Foreground="#8B949E" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <!-- PTT key/button (PTT only) -->
+                            <StackPanel x:Name="PttKeyPanel" Visibility="Collapsed" Margin="0,14,0,0">
+                                <TextBlock Text="Push to Talk shortcut" FontSize="12"
+                                           Foreground="#8B949E" Margin="0,0,0,8"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Background="#0D1117" BorderBrush="#30363D"
+                                            BorderThickness="1" CornerRadius="6" Padding="12,8">
+                                        <TextBlock x:Name="PttKeyDisplay" Text="Caps Lock"
+                                                   Foreground="#E6EDF3" FontSize="13"/>
+                                    </Border>
+                                    <Button x:Name="PttKeyButton" Grid.Column="1" Content="Change"
+                                            Margin="8,0,0,0" Cursor="Hand" Click="PttKeyButton_Click">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="PttBg" CornerRadius="6" BorderBrush="#30363D"
+                                                        BorderThickness="1" Padding="14,8">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="PttBg" Property="Background" Value="#1C2333"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                        <Button.Foreground>
+                                            <SolidColorBrush Color="#8B949E"/>
+                                        </Button.Foreground>
+                                    </Button>
+                                </Grid>
+                                <TextBlock x:Name="PttCaptureHint" Visibility="Collapsed"
+                                           Text="Press any key or mouse button to assign... (Esc to cancel)"
+                                           FontSize="11" Foreground="#3FB950" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                        </StackPanel>
+                    </ScrollViewer>
                 </Grid>
             </Border>
         </Grid>

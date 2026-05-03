@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using ICSharpCode.AvalonEdit.Highlighting;
+using NAudio.CoreAudioApi;
 
 namespace DevTavern.Client
 {
@@ -36,6 +37,15 @@ namespace DevTavern.Client
 
         // Channels per project: projectName -> list of channels
         private readonly Dictionary<string, ObservableCollection<ChannelItem>> _projectChannels = new();
+
+        // Voice channels per project (client-side only)
+        private readonly Dictionary<string, ObservableCollection<ChannelItem>> _projectVoiceChannels = new();
+        private ChannelItem? _currentVoiceChannel = null;
+        private int _nextVoiceChannelId = -1;
+        private bool _isMuted = false;
+        private bool _isDeafened = false;
+        private bool _capturingPttKey = false;
+        private string _pttKey = "Caps Lock";
 
         // Members per project
         private readonly Dictionary<string, ObservableCollection<MemberItem>> _projectMembers = new();
@@ -439,6 +449,17 @@ namespace DevTavern.Client
                     }
                 }
 
+                // Voice channels — pre-generate "General" on first load
+                if (!_projectVoiceChannels.ContainsKey(selected.name))
+                    _projectVoiceChannels[selected.name] = new ObservableCollection<ChannelItem>
+                    {
+                        new ChannelItem { Id = _nextVoiceChannelId--, Name = "General" }
+                    };
+                VoiceChannelsSectionHeader.Visibility = Visibility.Visible;
+                VoiceChannelList.Visibility = Visibility.Visible;
+                VoiceChannelList.ItemsSource = _projectVoiceChannels[selected.name];
+                // VoiceConnectedBar stays visible if the user is in a voice channel from any project
+
                 if (_projectMembers.TryGetValue(selected.name, out var members))
                 {
                     RefreshMembersList();
@@ -543,6 +564,12 @@ namespace DevTavern.Client
             ChannelsSectionHeader.Visibility = Visibility.Collapsed;
             ChannelList.Visibility = Visibility.Collapsed;
             ChannelList.ItemsSource = null;
+
+            VoiceChannelsSectionHeader.Visibility = Visibility.Collapsed;
+            VoiceChannelList.Visibility = Visibility.Collapsed;
+            VoiceChannelList.ItemsSource = null;
+            VoiceConnectedBar.Visibility = Visibility.Collapsed;
+            if (_currentVoiceChannel != null) { _currentVoiceChannel.IsJoined = false; _currentVoiceChannel = null; }
 
             ChatView.Visibility = Visibility.Collapsed;
             HomeView.Visibility = Visibility.Visible;
@@ -703,6 +730,212 @@ namespace DevTavern.Client
             NewChannelNameInput.Text = "";
             AddChannelOverlay.Visibility = Visibility.Visible;
             NewChannelNameInput.Focus();
+        }
+
+        private void VoiceChannelList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_selectedProject == null) return;
+            if (VoiceChannelList.SelectedItem is not ChannelItem selected) return;
+            VoiceChannelList.SelectedIndex = -1;
+
+            if (_currentVoiceChannel == selected)
+            {
+                LeaveCurrentVoiceChannel();
+                return;
+            }
+            LeaveCurrentVoiceChannel();
+            selected.IsJoined = true;
+            selected.VoiceMembers.Add(new VoiceMember { Username = _username });
+            _currentVoiceChannel = selected;
+            VoiceConnectedChannelName.Text = $"#{selected.Name}";
+            VoiceConnectedBar.Visibility = Visibility.Visible;
+        }
+
+        private void LeaveCurrentVoiceChannel()
+        {
+            if (_currentVoiceChannel != null)
+            {
+                _currentVoiceChannel.IsJoined = false;
+                _currentVoiceChannel.VoiceMembers.Clear();
+                _currentVoiceChannel = null;
+            }
+            VoiceConnectedBar.Visibility = Visibility.Collapsed;
+            ResetMuteDeafen();
+        }
+
+        private void ResetMuteDeafen()
+        {
+            _isMuted = false;
+            _isDeafened = false;
+            MuteIcon.Fill = new SolidColorBrush(Color.FromRgb(0x8B, 0x94, 0x9E));
+            DeafenIcon.Fill = new SolidColorBrush(Color.FromRgb(0x8B, 0x94, 0x9E));
+        }
+
+        private void MuteVoice_Click(object sender, RoutedEventArgs e)
+        {
+            _isMuted = !_isMuted;
+            MuteIcon.Fill = new SolidColorBrush(_isMuted
+                ? Color.FromRgb(0xDA, 0x36, 0x33)
+                : Color.FromRgb(0x8B, 0x94, 0x9E));
+            var me = _currentVoiceChannel?.VoiceMembers.FirstOrDefault(m => m.Username == _username);
+            if (me != null) me.IsMuted = _isMuted;
+        }
+
+        private void DeafenVoice_Click(object sender, RoutedEventArgs e)
+        {
+            _isDeafened = !_isDeafened;
+            DeafenIcon.Fill = new SolidColorBrush(_isDeafened
+                ? Color.FromRgb(0xDA, 0x36, 0x33)
+                : Color.FromRgb(0x8B, 0x94, 0x9E));
+            var me = _currentVoiceChannel?.VoiceMembers.FirstOrDefault(m => m.Username == _username);
+            if (me != null) me.IsDeafened = _isDeafened;
+        }
+
+        private void VoiceChannelList_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            e.Handled = true;
+        }
+
+        private void VoiceSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            PopulateAudioDevices();
+            VoiceSettingsOverlay.Visibility = Visibility.Visible;
+        }
+
+        private void PopulateAudioDevices()
+        {
+            try
+            {
+                var enumerator = new MMDeviceEnumerator();
+
+                InputDeviceCombo.Items.Clear();
+                InputDeviceCombo.Items.Add("Default");
+                foreach (var d in enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active))
+                    InputDeviceCombo.Items.Add(d.FriendlyName);
+                if (InputDeviceCombo.SelectedIndex < 0) InputDeviceCombo.SelectedIndex = 0;
+
+                OutputDeviceCombo.Items.Clear();
+                OutputDeviceCombo.Items.Add("Default");
+                foreach (var d in enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+                    OutputDeviceCombo.Items.Add(d.FriendlyName);
+                if (OutputDeviceCombo.SelectedIndex < 0) OutputDeviceCombo.SelectedIndex = 0;
+            }
+            catch
+            {
+                if (InputDeviceCombo.Items.Count == 0) InputDeviceCombo.Items.Add("Default");
+                if (OutputDeviceCombo.Items.Count == 0) OutputDeviceCombo.Items.Add("Default");
+                InputDeviceCombo.SelectedIndex = 0;
+                OutputDeviceCombo.SelectedIndex = 0;
+            }
+        }
+
+        private void VoiceSettingsOverlay_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_capturingPttKey) { _capturingPttKey = false; PttCaptureHint.Visibility = Visibility.Collapsed; PttKeyButton.IsEnabled = true; }
+            VoiceSettingsOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private void CloseVoiceSettings_Click(object sender, RoutedEventArgs e)
+        {
+            if (_capturingPttKey) { _capturingPttKey = false; PttCaptureHint.Visibility = Visibility.Collapsed; PttKeyButton.IsEnabled = true; }
+            VoiceSettingsOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private void VadMode_Checked(object sender, RoutedEventArgs e)
+        {
+            if (SensitivityPanel == null) return;
+            SensitivityPanel.Visibility = Visibility.Visible;
+            PttKeyPanel.Visibility = Visibility.Collapsed;
+        }
+
+        private void PttMode_Checked(object sender, RoutedEventArgs e)
+        {
+            if (PttKeyPanel == null) return;
+            SensitivityPanel.Visibility = Visibility.Collapsed;
+            PttKeyPanel.Visibility = Visibility.Visible;
+        }
+
+        private void PttKeyButton_Click(object sender, RoutedEventArgs e)
+        {
+            _capturingPttKey = true;
+            PttKeyButton.IsEnabled = false;
+            PttCaptureHint.Visibility = Visibility.Visible;
+        }
+
+        protected override void OnPreviewKeyDown(KeyEventArgs e)
+        {
+            if (_capturingPttKey)
+            {
+                e.Handled = true;
+                _capturingPttKey = false;
+                PttCaptureHint.Visibility = Visibility.Collapsed;
+                PttKeyButton.IsEnabled = true;
+                if (e.Key != Key.Escape)
+                {
+                    _pttKey = new KeyConverter().ConvertToString(e.Key) ?? e.Key.ToString();
+                    PttKeyDisplay.Text = _pttKey;
+                }
+                return;
+            }
+            base.OnPreviewKeyDown(e);
+        }
+
+        protected override void OnPreviewMouseDown(MouseButtonEventArgs e)
+        {
+            if (_capturingPttKey)
+            {
+                e.Handled = true;
+                _capturingPttKey = false;
+                PttCaptureHint.Visibility = Visibility.Collapsed;
+                PttKeyButton.IsEnabled = true;
+                _pttKey = e.ChangedButton switch
+                {
+                    MouseButton.Left   => "Mouse Left",
+                    MouseButton.Right  => "Mouse Right",
+                    MouseButton.Middle => "Mouse Middle",
+                    MouseButton.XButton1 => "Mouse 4",
+                    MouseButton.XButton2 => "Mouse 5",
+                    _ => e.ChangedButton.ToString()
+                };
+                PttKeyDisplay.Text = _pttKey;
+                return;
+            }
+            base.OnPreviewMouseDown(e);
+        }
+
+        private void LeaveVoiceChannel_Click(object sender, RoutedEventArgs e)
+        {
+            LeaveCurrentVoiceChannel();
+        }
+
+        private void AddVoiceChannelButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedProject == null) return;
+            NewVoiceChannelNameInput.Text = "";
+            AddVoiceChannelOverlay.Visibility = Visibility.Visible;
+            NewVoiceChannelNameInput.Focus();
+        }
+
+        private void CancelAddVoiceChannel_Click(object sender, RoutedEventArgs e)
+            => AddVoiceChannelOverlay.Visibility = Visibility.Collapsed;
+
+        private void AddVoiceChannelOverlay_MouseDown(object sender, MouseButtonEventArgs e)
+            => AddVoiceChannelOverlay.Visibility = Visibility.Collapsed;
+
+        private void ConfirmAddVoiceChannel_Click(object sender, RoutedEventArgs e)
+        {
+            var name = NewVoiceChannelNameInput.Text.Trim();
+            if (string.IsNullOrEmpty(name) || _selectedProject == null) return;
+            if (!_projectVoiceChannels.TryGetValue(_selectedProject, out var voiceChannels)) return;
+
+            voiceChannels.Add(new ChannelItem { Id = _nextVoiceChannelId--, Name = name });
+            AddVoiceChannelOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        private void NewVoiceChannelNameInput_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter) { ConfirmAddVoiceChannel_Click(sender, e); e.Handled = true; }
+            else if (e.Key == Key.Escape) { AddVoiceChannelOverlay.Visibility = Visibility.Collapsed; e.Handled = true; }
         }
 
         private void CancelAddChannel_Click(object sender, RoutedEventArgs e)
@@ -1997,6 +2230,38 @@ namespace DevTavern.Client
         {
             get => _hasUnreadMessages;
             set { _hasUnreadMessages = value; OnPropertyChanged(); }
+        }
+
+        private bool _isJoined;
+        public bool IsJoined
+        {
+            get => _isJoined;
+            set { _isJoined = value; OnPropertyChanged(); }
+        }
+
+        public ObservableCollection<VoiceMember> VoiceMembers { get; } = [];
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? propName = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
+    }
+
+    public class VoiceMember : INotifyPropertyChanged
+    {
+        public string Username { get; set; } = "";
+
+        private bool _isMuted;
+        public bool IsMuted
+        {
+            get => _isMuted;
+            set { _isMuted = value; OnPropertyChanged(); }
+        }
+
+        private bool _isDeafened;
+        public bool IsDeafened
+        {
+            get => _isDeafened;
+            set { _isDeafened = value; OnPropertyChanged(); }
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
