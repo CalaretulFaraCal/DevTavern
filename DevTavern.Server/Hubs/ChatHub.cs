@@ -79,5 +79,25 @@ namespace DevTavern.Server.Hubs
         {
             await Clients.Group($"Channel_{channelId}").SendAsync("ReceiveMessage", username, avatarUrl, messageContent);
         }
+
+        // ================= Voice Chat (Walkie-Talkie) =================
+
+        public async Task JoinVoiceChannel(string channelId, string username)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"VoiceChannel_{channelId}");
+            await Clients.Group($"VoiceChannel_{channelId}").SendAsync("UserJoinedVoice", username);
+        }
+
+        public async Task LeaveVoiceChannel(string channelId, string username)
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"VoiceChannel_{channelId}");
+            await Clients.Group($"VoiceChannel_{channelId}").SendAsync("UserLeftVoice", username);
+        }
+
+        // Intercepteaza chunk-ul audio de la un client si il trimite celorlalti din acelasi canal
+        public async Task SendAudioBuffer(string channelId, string username, byte[] audioData)
+        {
+            await Clients.GroupExcept($"VoiceChannel_{channelId}", Context.ConnectionId).SendAsync("ReceiveAudioBuffer", username, audioData);
+        }
     }
 }

@@ -16,6 +16,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using ICSharpCode.AvalonEdit.Highlighting;
 using NAudio.CoreAudioApi;
+using NAudio.Wave;
 
 namespace DevTavern.Client
 {
@@ -46,6 +47,11 @@ namespace DevTavern.Client
         private bool _isDeafened = false;
         private bool _capturingPttKey = false;
         private string _pttKey = "Caps Lock";
+
+        // NAudio Voice Chat properties
+        private WaveInEvent? _waveIn;
+        private WaveOutEvent? _waveOut;
+        private BufferedWaveProvider? _waveProvider;
 
         // Members per project
         private readonly Dictionary<string, ObservableCollection<MemberItem>> _projectMembers = new();
@@ -252,6 +258,19 @@ namespace DevTavern.Client
                             m.DevRoles = newRolesCsv.Split(new[] { ", ", "," }, StringSplitOptions.RemoveEmptyEntries).ToList();
                             RefreshMembersList();
                         }
+                    }
+                });
+            });
+
+            // Primim stream audio de la alti utilizatori din canalul de voce
+            _hubConnection.On<string, byte[]>("ReceiveAudioBuffer", (senderUsername, audioData) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (_isDeafened) return;
+                    if (_waveProvider != null)
+                    {
+                        try { _waveProvider.AddSamples(audioData, 0, audioData.Length); } catch { }
                     }
                 });
             });
@@ -732,7 +751,7 @@ namespace DevTavern.Client
             NewChannelNameInput.Focus();
         }
 
-        private void VoiceChannelList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private async void VoiceChannelList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_selectedProject == null) return;
             if (VoiceChannelList.SelectedItem is not ChannelItem selected) return;
@@ -749,18 +768,85 @@ namespace DevTavern.Client
             _currentVoiceChannel = selected;
             VoiceConnectedChannelName.Text = $"#{selected.Name}";
             VoiceConnectedBar.Visibility = Visibility.Visible;
+
+            if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+            {
+                try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceChannel.Id.ToString(), _username); } catch { }
+            }
+
+            StartAudioCaptureAndPlayback();
         }
 
-        private void LeaveCurrentVoiceChannel()
+        private void StartAudioCaptureAndPlayback()
+        {
+            try
+            {
+                _waveIn = new WaveInEvent();
+                _waveIn.WaveFormat = new WaveFormat(44100, 16, 1);
+                _waveIn.BufferMilliseconds = 100;
+                _waveIn.DataAvailable += async (s, args) =>
+                {
+                    if (_isMuted || _currentVoiceChannel == null || _hubConnection == null || _hubConnection.State != HubConnectionState.Connected) return;
+
+                    byte[] buffer = new byte[args.BytesRecorded];
+                    Array.Copy(args.Buffer, buffer, args.BytesRecorded);
+                    
+                    try
+                    {
+                        await _hubConnection.InvokeAsync("SendAudioBuffer", _currentVoiceChannel.Id.ToString(), _username, buffer);
+                    }
+                    catch { }
+                };
+
+                _waveProvider = new BufferedWaveProvider(new WaveFormat(44100, 16, 1));
+                _waveProvider.DiscardOnBufferOverflow = true;
+
+                _waveOut = new WaveOutEvent();
+                _waveOut.Init(_waveProvider);
+
+                _waveOut.Play();
+                _waveIn.StartRecording();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not start audio devices: {ex.Message}");
+            }
+        }
+
+        private async void LeaveCurrentVoiceChannel()
         {
             if (_currentVoiceChannel != null)
             {
+                if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                {
+                    try { await _hubConnection.InvokeAsync("LeaveVoiceChannel", _currentVoiceChannel.Id.ToString(), _username); } catch { }
+                }
+
                 _currentVoiceChannel.IsJoined = false;
                 _currentVoiceChannel.VoiceMembers.Clear();
                 _currentVoiceChannel = null;
             }
             VoiceConnectedBar.Visibility = Visibility.Collapsed;
             ResetMuteDeafen();
+
+            StopAudioCaptureAndPlayback();
+        }
+
+        private void StopAudioCaptureAndPlayback()
+        {
+            if (_waveIn != null)
+            {
+                try { _waveIn.StopRecording(); } catch { }
+                _waveIn.Dispose();
+                _waveIn = null;
+            }
+            if (_waveOut != null)
+            {
+                try { _waveOut.Stop(); } catch { }
+                _waveOut.Dispose();
+                _waveOut = null;
+            }
+            _waveProvider = null;
         }
 
         private void ResetMuteDeafen()
