@@ -90,11 +90,13 @@ namespace DevTavern.Server.Hubs
             _connectionVoiceChannel[Context.ConnectionId] = (channelKey, username);
             await Groups.AddToGroupAsync(Context.ConnectionId, $"VoiceChannel_{channelKey}");
 
-            // Cel care intra primeste lista celor deja prezenti
-            await Clients.Caller.SendAsync("VoiceChannelSnapshot", existing);
-
-            // Toti membrii proiectului vad ca a intrat cineva in canalul de voce
             var projectId = ProjectIdFromKey(channelKey);
+
+            // Trimite celui care intra cate un UserJoinedVoice pentru fiecare user deja prezent
+            foreach (var existingUser in existing)
+                await Clients.Caller.SendAsync("UserJoinedVoice", channelKey, existingUser);
+
+            // Anunta tot proiectul ca a intrat un nou user
             await Clients.Group($"Project_{projectId}").SendAsync("UserJoinedVoice", channelKey, username);
         }
 

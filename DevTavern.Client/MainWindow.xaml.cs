@@ -276,20 +276,6 @@ namespace DevTavern.Client
                 });
             });
 
-            // Lista celor deja prezenti in canal, trimisa de server la join
-            _hubConnection.On<List<string>>("VoiceChannelSnapshot", (existingMembers) =>
-            {
-                Application.Current.Dispatcher.Invoke(() =>
-                {
-                    if (_currentVoiceChannel == null) return;
-                    foreach (var member in existingMembers)
-                    {
-                        if (!_currentVoiceChannel.VoiceMembers.Any(m => m.Username == member))
-                            _currentVoiceChannel.VoiceMembers.Add(new VoiceMember { Username = member });
-                    }
-                });
-            });
-
             _hubConnection.On<string, string>("UserJoinedVoice", (channelKey, joinedUsername) =>
             {
                 Application.Current.Dispatcher.Invoke(() =>
@@ -887,15 +873,19 @@ namespace DevTavern.Client
         {
             if (_currentVoiceChannel != null)
             {
-                if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected && _currentVoiceGroupKey != null)
-                {
-                    try { await _hubConnection.InvokeAsync("LeaveVoiceChannel", _currentVoiceGroupKey, _username); } catch { }
-                }
-
-                _currentVoiceChannel.IsJoined = false;
-                _currentVoiceChannel.VoiceMembers.Clear();
+                // Captura referintele inainte de await ca sa nu fie suprascrise de un join concurent
+                var leavingChannel = _currentVoiceChannel;
+                var leavingKey = _currentVoiceGroupKey;
                 _currentVoiceChannel = null;
                 _currentVoiceGroupKey = null;
+
+                if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected && leavingKey != null)
+                {
+                    try { await _hubConnection.InvokeAsync("LeaveVoiceChannel", leavingKey, _username); } catch { }
+                }
+
+                leavingChannel.IsJoined = false;
+                leavingChannel.VoiceMembers.Clear();
             }
             VoiceConnectedBar.Visibility = Visibility.Collapsed;
             ResetMuteDeafen();
