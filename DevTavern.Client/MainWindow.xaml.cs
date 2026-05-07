@@ -290,23 +290,25 @@ namespace DevTavern.Client
                 });
             });
 
-            _hubConnection.On<string>("UserJoinedVoice", (joinedUsername) =>
+            _hubConnection.On<string, string>("UserJoinedVoice", (channelKey, joinedUsername) =>
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    if (_currentVoiceChannel == null) return;
-                    if (_currentVoiceChannel.VoiceMembers.Any(m => m.Username == joinedUsername)) return;
-                    _currentVoiceChannel.VoiceMembers.Add(new VoiceMember { Username = joinedUsername });
+                    var channel = FindVoiceChannelByKey(channelKey);
+                    if (channel == null) return;
+                    if (channel.VoiceMembers.Any(m => m.Username == joinedUsername)) return;
+                    channel.VoiceMembers.Add(new VoiceMember { Username = joinedUsername });
                 });
             });
 
-            _hubConnection.On<string>("UserLeftVoice", (leftUsername) =>
+            _hubConnection.On<string, string>("UserLeftVoice", (channelKey, leftUsername) =>
             {
                 Application.Current.Dispatcher.Invoke(() =>
                 {
-                    if (_currentVoiceChannel == null) return;
-                    var member = _currentVoiceChannel.VoiceMembers.FirstOrDefault(m => m.Username == leftUsername);
-                    if (member != null) _currentVoiceChannel.VoiceMembers.Remove(member);
+                    var channel = FindVoiceChannelByKey(channelKey);
+                    if (channel == null) return;
+                    var member = channel.VoiceMembers.FirstOrDefault(m => m.Username == leftUsername);
+                    if (member != null) channel.VoiceMembers.Remove(member);
                 });
             });
 
@@ -507,11 +509,38 @@ namespace DevTavern.Client
                 if (!_projectVoiceChannels.ContainsKey(selected.name))
                     _projectVoiceChannels[selected.name] = new ObservableCollection<ChannelItem>
                     {
-                        new ChannelItem { Id = _nextVoiceChannelId--, Name = "General" }
+                        new ChannelItem { Id = _nextVoiceChannelId--, Name = "General", VoiceGroupKey = $"{selected.DbId}_General" }
                     };
+                else
+                {
+                    // Asigura-te ca VoiceGroupKey e setat (pentru intrari create inainte de acest fix)
+                    foreach (var ch in _projectVoiceChannels[selected.name])
+                        if (string.IsNullOrEmpty(ch.VoiceGroupKey))
+                            ch.VoiceGroupKey = $"{selected.DbId}_{ch.Name}";
+                }
                 VoiceChannelsSectionHeader.Visibility = Visibility.Visible;
                 VoiceChannelList.Visibility = Visibility.Visible;
                 VoiceChannelList.ItemsSource = _projectVoiceChannels[selected.name];
+
+                // Incarca starea voice actuala de pe server pentru acest proiect
+                if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                {
+                    try
+                    {
+                        var voiceState = await _hubConnection.InvokeAsync<Dictionary<string, List<string>>>("GetProjectVoiceState", selected.DbId.ToString());
+                        if (voiceState != null && _projectVoiceChannels.TryGetValue(selected.name, out var vChannels))
+                        {
+                            foreach (var ch in vChannels)
+                            {
+                                ch.VoiceMembers.Clear();
+                                if (!string.IsNullOrEmpty(ch.VoiceGroupKey) && voiceState.TryGetValue(ch.VoiceGroupKey, out var chMembers))
+                                    foreach (var m in chMembers)
+                                        ch.VoiceMembers.Add(new VoiceMember { Username = m });
+                            }
+                        }
+                    }
+                    catch { }
+                }
                 // VoiceConnectedBar stays visible if the user is in a voice channel from any project
 
                 if (_projectMembers.TryGetValue(selected.name, out var members))
@@ -808,10 +837,21 @@ namespace DevTavern.Client
 
             if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
             {
-                try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceGroupKey, _username); } catch { }
+                var joinProjectId = _projects.FirstOrDefault(p => p.name == _selectedProject)?.DbId.ToString() ?? "0";
+                try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceGroupKey, joinProjectId, _username); } catch { }
             }
 
             StartAudioCaptureAndPlayback();
+        }
+
+        private ChannelItem? FindVoiceChannelByKey(string channelKey)
+        {
+            foreach (var channels in _projectVoiceChannels.Values)
+            {
+                var ch = channels.FirstOrDefault(c => c.VoiceGroupKey == channelKey);
+                if (ch != null) return ch;
+            }
+            return null;
         }
 
         private void StartAudioCaptureAndPlayback()
@@ -2340,6 +2380,7 @@ namespace DevTavern.Client
     {
         public int Id { get; set; }
         public string Name { get; set; } = "";
+        public string VoiceGroupKey { get; set; } = "";
 
         private int _unreadMentionCount;
         public int UnreadMentionCount
