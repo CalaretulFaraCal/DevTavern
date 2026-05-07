@@ -42,6 +42,7 @@ namespace DevTavern.Client
         // Voice channels per project (client-side only)
         private readonly Dictionary<string, ObservableCollection<ChannelItem>> _projectVoiceChannels = new();
         private ChannelItem? _currentVoiceChannel = null;
+        private string? _currentVoiceGroupKey = null;
         private int _nextVoiceChannelId = -1;
         private bool _isMuted = false;
         private bool _isDeafened = false;
@@ -766,12 +767,14 @@ namespace DevTavern.Client
             selected.IsJoined = true;
             selected.VoiceMembers.Add(new VoiceMember { Username = _username });
             _currentVoiceChannel = selected;
+            var projectDbId = _projects.FirstOrDefault(p => p.name == _selectedProject)?.DbId ?? 0;
+            _currentVoiceGroupKey = $"{projectDbId}_{selected.Name}";
             VoiceConnectedChannelName.Text = $"#{selected.Name}";
             VoiceConnectedBar.Visibility = Visibility.Visible;
 
             if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
             {
-                try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceChannel.Id.ToString(), _username); } catch { }
+                try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceGroupKey, _username); } catch { }
             }
 
             StartAudioCaptureAndPlayback();
@@ -786,14 +789,14 @@ namespace DevTavern.Client
                 _waveIn.BufferMilliseconds = 100;
                 _waveIn.DataAvailable += async (s, args) =>
                 {
-                    if (_isMuted || _currentVoiceChannel == null || _hubConnection == null || _hubConnection.State != HubConnectionState.Connected) return;
+                    if (_isMuted || _currentVoiceChannel == null || _currentVoiceGroupKey == null || _hubConnection == null || _hubConnection.State != HubConnectionState.Connected) return;
 
                     byte[] buffer = new byte[args.BytesRecorded];
                     Array.Copy(args.Buffer, buffer, args.BytesRecorded);
-                    
+
                     try
                     {
-                        await _hubConnection.InvokeAsync("SendAudioBuffer", _currentVoiceChannel.Id.ToString(), _username, buffer);
+                        await _hubConnection.InvokeAsync("SendAudioBuffer", _currentVoiceGroupKey, _username, buffer);
                     }
                     catch { }
                 };
@@ -817,14 +820,15 @@ namespace DevTavern.Client
         {
             if (_currentVoiceChannel != null)
             {
-                if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected && _currentVoiceGroupKey != null)
                 {
-                    try { await _hubConnection.InvokeAsync("LeaveVoiceChannel", _currentVoiceChannel.Id.ToString(), _username); } catch { }
+                    try { await _hubConnection.InvokeAsync("LeaveVoiceChannel", _currentVoiceGroupKey, _username); } catch { }
                 }
 
                 _currentVoiceChannel.IsJoined = false;
                 _currentVoiceChannel.VoiceMembers.Clear();
                 _currentVoiceChannel = null;
+                _currentVoiceGroupKey = null;
             }
             VoiceConnectedBar.Visibility = Visibility.Collapsed;
             ResetMuteDeafen();
