@@ -522,25 +522,19 @@ namespace DevTavern.Client
                 VoiceChannelList.Visibility = Visibility.Visible;
                 VoiceChannelList.ItemsSource = _projectVoiceChannels[selected.name];
 
-                // Incarca starea voice actuala de pe server pentru acest proiect
-                if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                // Curata membrii voice stali si cere starea actuala de la server
+                if (_projectVoiceChannels.TryGetValue(selected.name, out var vChannels))
                 {
-                    try
+                    foreach (var ch in vChannels)
                     {
-                        var voiceState = await _hubConnection.InvokeAsync<Dictionary<string, List<string>>>("GetProjectVoiceState", selected.DbId.ToString());
-                        if (voiceState != null && _projectVoiceChannels.TryGetValue(selected.name, out var vChannels))
-                        {
-                            foreach (var ch in vChannels)
-                            {
-                                ch.VoiceMembers.Clear();
-                                if (!string.IsNullOrEmpty(ch.VoiceGroupKey) && voiceState.TryGetValue(ch.VoiceGroupKey, out var chMembers))
-                                    foreach (var m in chMembers)
-                                        ch.VoiceMembers.Add(new VoiceMember { Username = m });
-                            }
-                        }
+                        ch.VoiceMembers.Clear();
+                        // Daca userul e deja conectat in acest canal, re-adauga-l imediat
+                        if (ch == _currentVoiceChannel)
+                            ch.VoiceMembers.Add(new VoiceMember { Username = _username });
                     }
-                    catch { }
                 }
+                if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                    try { await _hubConnection.InvokeAsync("RequestProjectVoiceSnapshot", selected.DbId.ToString()); } catch { }
                 // VoiceConnectedBar stays visible if the user is in a voice channel from any project
 
                 if (_projectMembers.TryGetValue(selected.name, out var members))
@@ -837,8 +831,7 @@ namespace DevTavern.Client
 
             if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
             {
-                var joinProjectId = _projects.FirstOrDefault(p => p.name == _selectedProject)?.DbId.ToString() ?? "0";
-                try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceGroupKey, joinProjectId, _username); } catch { }
+                try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceGroupKey, _username); } catch { }
             }
 
             StartAudioCaptureAndPlayback();
