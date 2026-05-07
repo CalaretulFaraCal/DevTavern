@@ -13,6 +13,11 @@ namespace DevTavern.Server.Hubs
         // Thread-safe dictionary for global connection tracking (ConnectionId -> Username)
         private static readonly ConcurrentDictionary<string, string> _userConnections = new();
 
+        // Voice channel membership: channelKey -> set of usernames
+        private static readonly ConcurrentDictionary<string, HashSet<string>> _voiceChannelMembers = new();
+        // Tracks which voice channel each connection is in: ConnectionId -> (channelKey, username)
+        private static readonly ConcurrentDictionary<string, (string channelKey, string username)> _connectionVoiceChannel = new();
+
         public async Task<List<string>> GoOnline(string username)
         {
             _userConnections[Context.ConnectionId] = username;
@@ -28,13 +33,21 @@ namespace DevTavern.Server.Hubs
         {
             if (_userConnections.TryRemove(Context.ConnectionId, out var username))
             {
-                // Daca acest user nu mai are niciun tab/conexiune deschisa, il anuntam offline
                 bool stillOnline = _userConnections.Values.Contains(username);
                 if (!stillOnline)
-                {
                     await Clients.All.SendAsync("UserWentOffline", username);
-                }
             }
+
+            if (_connectionVoiceChannel.TryRemove(Context.ConnectionId, out var voiceInfo))
+            {
+                if (_voiceChannelMembers.TryGetValue(voiceInfo.channelKey, out var members))
+                {
+                    lock (members) { members.Remove(voiceInfo.username); }
+                }
+                await Clients.Group($"VoiceChannel_{voiceInfo.channelKey}").SendAsync("UserLeftVoice", voiceInfo.username);
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"VoiceChannel_{voiceInfo.channelKey}");
+            }
+
             await base.OnDisconnectedAsync(exception);
         }
 
@@ -82,14 +95,31 @@ namespace DevTavern.Server.Hubs
 
         // ================= Voice Chat (Walkie-Talkie) =================
 
-        public async Task JoinVoiceChannel(string channelId, string username)
+        // Returneaza lista userilor deja conectati la canal inainte ca noul user sa intre
+        public async Task<List<string>> JoinVoiceChannel(string channelId, string username)
         {
+            var members = _voiceChannelMembers.GetOrAdd(channelId, _ => new HashSet<string>());
+
+            List<string> existing;
+            lock (members)
+            {
+                existing = members.ToList();
+                members.Add(username);
+            }
+
+            _connectionVoiceChannel[Context.ConnectionId] = (channelId, username);
             await Groups.AddToGroupAsync(Context.ConnectionId, $"VoiceChannel_{channelId}");
-            await Clients.Group($"VoiceChannel_{channelId}").SendAsync("UserJoinedVoice", username);
+            await Clients.OthersInGroup($"VoiceChannel_{channelId}").SendAsync("UserJoinedVoice", username);
+
+            return existing;
         }
 
         public async Task LeaveVoiceChannel(string channelId, string username)
         {
+            if (_voiceChannelMembers.TryGetValue(channelId, out var members))
+                lock (members) { members.Remove(username); }
+
+            _connectionVoiceChannel.TryRemove(Context.ConnectionId, out _);
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"VoiceChannel_{channelId}");
             await Clients.Group($"VoiceChannel_{channelId}").SendAsync("UserLeftVoice", username);
         }

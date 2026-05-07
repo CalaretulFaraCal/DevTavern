@@ -276,6 +276,26 @@ namespace DevTavern.Client
                 });
             });
 
+            _hubConnection.On<string>("UserJoinedVoice", (joinedUsername) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (_currentVoiceChannel == null) return;
+                    if (_currentVoiceChannel.VoiceMembers.Any(m => m.Username == joinedUsername)) return;
+                    _currentVoiceChannel.VoiceMembers.Add(new VoiceMember { Username = joinedUsername });
+                });
+            });
+
+            _hubConnection.On<string>("UserLeftVoice", (leftUsername) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (_currentVoiceChannel == null) return;
+                    var member = _currentVoiceChannel.VoiceMembers.FirstOrDefault(m => m.Username == leftUsername);
+                    if (member != null) _currentVoiceChannel.VoiceMembers.Remove(member);
+                });
+            });
+
             try 
             { 
                 await _hubConnection.StartAsync(); 
@@ -774,7 +794,16 @@ namespace DevTavern.Client
 
             if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
             {
-                try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceGroupKey, _username); } catch { }
+                try
+                {
+                    var existingMembers = await _hubConnection.InvokeAsync<List<string>>("JoinVoiceChannel", _currentVoiceGroupKey, _username);
+                    foreach (var member in existingMembers ?? [])
+                    {
+                        if (!selected.VoiceMembers.Any(m => m.Username == member))
+                            selected.VoiceMembers.Add(new VoiceMember { Username = member });
+                    }
+                }
+                catch { }
             }
 
             StartAudioCaptureAndPlayback();
