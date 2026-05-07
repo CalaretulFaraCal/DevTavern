@@ -95,8 +95,7 @@ namespace DevTavern.Server.Hubs
 
         // ================= Voice Chat (Walkie-Talkie) =================
 
-        // Returneaza lista userilor deja conectati la canal inainte ca noul user sa intre
-        public async Task<List<string>> JoinVoiceChannel(string channelId, string username)
+        public async Task JoinVoiceChannel(string channelId, string username)
         {
             var members = _voiceChannelMembers.GetOrAdd(channelId, _ => new HashSet<string>());
 
@@ -109,9 +108,12 @@ namespace DevTavern.Server.Hubs
 
             _connectionVoiceChannel[Context.ConnectionId] = (channelId, username);
             await Groups.AddToGroupAsync(Context.ConnectionId, $"VoiceChannel_{channelId}");
-            await Clients.OthersInGroup($"VoiceChannel_{channelId}").SendAsync("UserJoinedVoice", username);
 
-            return existing;
+            // Trimite celui care tocmai a intrat lista celor deja prezenti
+            await Clients.Caller.SendAsync("VoiceChannelSnapshot", existing);
+
+            // Anunta ceilalti din canal ca a intrat cineva nou
+            await Clients.OthersInGroup($"VoiceChannel_{channelId}").SendAsync("UserJoinedVoice", username);
         }
 
         public async Task LeaveVoiceChannel(string channelId, string username)

@@ -276,6 +276,20 @@ namespace DevTavern.Client
                 });
             });
 
+            // Lista celor deja prezenti in canal, trimisa de server la join
+            _hubConnection.On<List<string>>("VoiceChannelSnapshot", (existingMembers) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (_currentVoiceChannel == null) return;
+                    foreach (var member in existingMembers)
+                    {
+                        if (!_currentVoiceChannel.VoiceMembers.Any(m => m.Username == member))
+                            _currentVoiceChannel.VoiceMembers.Add(new VoiceMember { Username = member });
+                    }
+                });
+            });
+
             _hubConnection.On<string>("UserJoinedVoice", (joinedUsername) =>
             {
                 Application.Current.Dispatcher.Invoke(() =>
@@ -794,16 +808,7 @@ namespace DevTavern.Client
 
             if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
             {
-                try
-                {
-                    var existingMembers = await _hubConnection.InvokeAsync<List<string>>("JoinVoiceChannel", _currentVoiceGroupKey, _username);
-                    foreach (var member in existingMembers ?? [])
-                    {
-                        if (!selected.VoiceMembers.Any(m => m.Username == member))
-                            selected.VoiceMembers.Add(new VoiceMember { Username = member });
-                    }
-                }
-                catch { }
+                try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceGroupKey, _username); } catch { }
             }
 
             StartAudioCaptureAndPlayback();
