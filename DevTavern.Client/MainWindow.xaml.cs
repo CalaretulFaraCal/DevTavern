@@ -468,6 +468,8 @@ namespace DevTavern.Client
                         }
                     }
                     catch { }
+
+                    _ = PrefetchFullNamesAsync([.. _projectMembers[project.name].Select(m => m.Username)]);
                 }
                 catch { }
             }
@@ -509,6 +511,7 @@ namespace DevTavern.Client
 
         private async void ProjectList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            MiniProfilePanel.Visibility = Visibility.Collapsed;
             if (ProjectList.SelectedItem is RepoItem selected)
             {
                 // ---- SignalR Join/Leave Project Group ----
@@ -667,6 +670,131 @@ namespace DevTavern.Client
 
             MembersList.ItemsSource = null;
             MembersList.ItemsSource = groupedList;
+        }
+
+        private string? _profileGitHubUrl;
+        private readonly Dictionary<string, string> _fullNameCache = [];
+
+        private async Task PrefetchFullNamesAsync(List<string> usernames)
+        {
+            foreach (var username in usernames)
+            {
+                if (_fullNameCache.ContainsKey(username)) continue;
+                try
+                {
+                    using var ghClient = new HttpClient();
+                    ghClient.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                    ghClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+                    var resp = await ghClient.GetAsync($"https://api.github.com/users/{username}");
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        var json = JObject.Parse(await resp.Content.ReadAsStringAsync());
+                        var name = json["name"]?.ToString();
+                        _fullNameCache[username] = !string.IsNullOrEmpty(name) ? name : username;
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private void MemberItem_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.DataContext is MemberItem member && !member.IsHeader)
+                _ = ShowMiniProfileAsync(member.Username, member.AvatarUrl);
+        }
+
+        private void ChatUser_Click(object sender, MouseButtonEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is ChatMessage msg && !msg.IsDateSeparator && !msg.IsSystemMessage)
+            {
+                _ = ShowMiniProfileAsync(msg.Username, msg.AvatarUrl);
+                e.Handled = true;
+            }
+        }
+
+        private async Task ShowMiniProfileAsync(string username, string? avatarUrl)
+        {
+            MemberItem? member = null;
+            foreach (var col in _projectMembers.Values)
+            {
+                member = col.FirstOrDefault(x => x.Username == username && !x.IsHeader);
+                if (member != null) break;
+            }
+
+            string initials = username.Length >= 2 ? username[..2].ToUpper() : username.ToUpper();
+            ProfileInitials.Text = member?.Initials ?? initials;
+
+            if (!string.IsNullOrEmpty(avatarUrl))
+            {
+                ProfileAvatar.Source = new BitmapImage(new Uri(avatarUrl));
+                ProfileAvatar.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                ProfileAvatar.Source = null;
+                ProfileAvatar.Visibility = Visibility.Collapsed;
+            }
+
+            ProfileFullName.Text = username;
+            ProfileUsername.Text = _fullNameCache.TryGetValue(username, out var cached) ? cached : "";
+            ProfileRoles.Text = member?.HasDevRoles == true ? member.RoleBadges : (member?.Role ?? "Member");
+
+            ProfileCommonProjects.ItemsSource = _projects
+                .Where(p => _projectMembers.TryGetValue(p.name, out var col)
+                            && col.Any(x => x.Username == username && !x.IsHeader))
+                .Select(p => p.name)
+                .ToList();
+
+            _profileGitHubUrl = $"https://github.com/{username}";
+
+            var cursor = Mouse.GetPosition(this);
+            double panelW = 260, panelH = 420;
+            double left = cursor.X + 14;
+            double top = cursor.Y + 14;
+            if (left + panelW > ActualWidth)  left = cursor.X - panelW - 14;
+            if (top  + panelH > ActualHeight) top  = Math.Max(0, ActualHeight - panelH - 10);
+            MiniProfilePanel.Margin = new Thickness(left, top, 0, 0);
+
+            MiniProfilePanel.Visibility = Visibility.Visible;
+
+            // Fetch full name in background only if not yet cached
+            if (!_fullNameCache.ContainsKey(username))
+            {
+                try
+                {
+                    using var ghClient = new HttpClient();
+                    ghClient.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                    ghClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+                    var resp = await ghClient.GetAsync($"https://api.github.com/users/{username}");
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        var json = JObject.Parse(await resp.Content.ReadAsStringAsync());
+                        var name = json["name"]?.ToString();
+                        var fullName = !string.IsNullOrEmpty(name) ? name : username;
+                        _fullNameCache[username] = fullName;
+                        if (MiniProfilePanel.Visibility == Visibility.Visible && ProfileFullName.Text == username)
+                            ProfileUsername.Text = fullName;
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private void Window_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (MiniProfilePanel.Visibility != Visibility.Visible) return;
+            var pos = e.GetPosition(MiniProfilePanel);
+            if (pos.X < 0 || pos.Y < 0 || pos.X > MiniProfilePanel.ActualWidth || pos.Y > MiniProfilePanel.ActualHeight)
+            {
+                MiniProfilePanel.Visibility = Visibility.Collapsed;
+                e.Handled = true;
+            }
+        }
+
+        private void ProfileGitHubLink_Click(object sender, RoutedEventArgs e)
+        {
+            if (_profileGitHubUrl != null)
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_profileGitHubUrl) { UseShellExecute = true });
         }
 
         private void HomeButton_Click(object sender, MouseButtonEventArgs e)

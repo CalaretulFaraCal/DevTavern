@@ -5,7 +5,8 @@
         xmlns:avalonedit="clr-namespace:ICSharpCode.AvalonEdit;assembly=ICSharpCode.AvalonEdit"
         Title="DevTavern" Height="700" Width="1100"
         WindowStartupLocation="CenterScreen"
-        Background="#0D1117">
+        Background="#0D1117"
+        PreviewMouseDown="Window_PreviewMouseDown">
 
     <Window.Resources>
         <!-- Tooltip style with arrow indicator -->
@@ -129,7 +130,6 @@
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="Padding" Value="0"/>
             <Setter Property="Margin" Value="0,1"/>
-            <Setter Property="IsHitTestVisible" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
@@ -1138,8 +1138,9 @@
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Top">
                                         <!-- Avatar -->
                                         <Border Width="36" Height="36" CornerRadius="18" Margin="0,0,12,0"
-                                                VerticalAlignment="Top"
-                                                Background="{Binding AvatarColor}">
+                                                VerticalAlignment="Top" Cursor="Hand"
+                                                Background="{Binding AvatarColor}"
+                                                Tag="{Binding}" MouseLeftButtonUp="ChatUser_Click">
                                             <Grid>
                                                 <TextBlock Text="{Binding Initials}" FontSize="12" FontWeight="Bold"
                                                            Foreground="White" HorizontalAlignment="Center"
@@ -1166,7 +1167,8 @@
                                         <StackPanel MaxWidth="500">
                                             <StackPanel Orientation="Horizontal">
                                                 <TextBlock Text="{Binding Username}" FontSize="14" FontWeight="SemiBold"
-                                                           Foreground="{Binding UsernameColor}" Margin="0,0,8,0"/>
+                                                           Foreground="{Binding UsernameColor}" Margin="0,0,8,0"
+                                                           Cursor="Hand" Tag="{Binding}" MouseLeftButtonUp="ChatUser_Click"/>
                                                 <TextBlock Text="{Binding Timestamp}" FontSize="11" Foreground="#8B949E"
                                                            VerticalAlignment="Center"/>
                                                 <Button Content="Jump to Code" Margin="12,0,0,0" Padding="8,2" VerticalAlignment="Center"
@@ -1387,7 +1389,8 @@
                                     </TextBlock>
                                     
                                     <!-- User variant -->
-                                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                                    <StackPanel Orientation="Horizontal" Margin="0,2" Cursor="Hand"
+                                                MouseLeftButtonUp="MemberItem_MouseLeftButtonUp">
                                         <StackPanel.Style>
                                             <Style TargetType="StackPanel">
                                                 <Setter Property="Visibility" Value="Visible"/>
@@ -2468,6 +2471,95 @@
                 </Grid>
             </Border>
         </Grid>
+
+        <!-- ========== MINI PROFILE PANEL ========== -->
+        <Border x:Name="MiniProfilePanel"
+                Grid.ColumnSpan="5" Grid.RowSpan="2"
+                HorizontalAlignment="Left" VerticalAlignment="Top"
+                Width="260" MaxHeight="520"
+                Background="#1C2333" BorderBrush="#30363D" BorderThickness="1"
+                CornerRadius="8" Panel.ZIndex="500" Visibility="Collapsed">
+            <StackPanel>
+                <!-- Header band -->
+                <Border Height="70" Background="#21262D">
+                    <!-- Avatar -->
+                    <Border Width="48" Height="48" CornerRadius="24"
+                            Background="#30363D" HorizontalAlignment="Left"
+                            VerticalAlignment="Center" Margin="16,0,0,0">
+                        <Grid>
+                            <TextBlock x:Name="ProfileInitials" FontSize="16" FontWeight="Bold"
+                                       Foreground="#8B949E" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <Image x:Name="ProfileAvatar" Stretch="UniformToFill" Visibility="Collapsed">
+                                <Image.Clip>
+                                    <EllipseGeometry Center="24,24" RadiusX="24" RadiusY="24"/>
+                                </Image.Clip>
+                            </Image>
+                        </Grid>
+                    </Border>
+                </Border>
+
+                <!-- Content -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="440">
+                    <StackPanel Margin="16,12,16,16">
+                        <!-- Username -->
+                        <TextBlock x:Name="ProfileFullName" FontSize="15" FontWeight="Bold"
+                                   Foreground="#E6EDF3" TextTrimming="CharacterEllipsis"/>
+                        <!-- Full name -->
+                        <TextBlock x:Name="ProfileUsername" FontSize="12" Foreground="#8B949E" Margin="0,2,0,0"/>
+
+                        <Rectangle Height="1" Fill="#30363D" Margin="0,12"/>
+
+                        <!-- Roles -->
+                        <TextBlock Text="ROLES" FontSize="10" FontWeight="Bold" Foreground="#8B949E" Margin="0,0,0,4"/>
+                        <TextBlock x:Name="ProfileRoles" FontSize="13" Foreground="#E6EDF3" TextWrapping="Wrap"/>
+
+                        <Rectangle Height="1" Fill="#30363D" Margin="0,12"/>
+
+                        <!-- Common projects -->
+                        <TextBlock Text="COMMON PROJECTS" FontSize="10" FontWeight="Bold" Foreground="#8B949E" Margin="0,0,0,6"/>
+                        <ItemsControl x:Name="ProfileCommonProjects">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Margin="0,3">
+                                        <Path Data="M12,2A10,10 0 0,0 2,12C2,16.42 4.87,20.17 8.84,21.5C9.34,21.58 9.5,21.27 9.5,21C9.5,20.77 9.5,20.14 9.5,19.31C6.73,19.91 6.14,17.97 6.14,17.97C5.68,16.81 5.03,16.5 5.03,16.5C4.12,15.88 5.1,15.9 5.1,15.9C6.1,15.97 6.63,16.93 6.63,16.93C7.5,18.45 8.97,18 9.54,17.76C9.63,17.11 9.89,16.67 10.17,16.42C7.95,16.17 5.62,15.31 5.62,11.5C5.62,10.39 6,9.5 6.65,8.79C6.55,8.54 6.2,7.5 6.75,6.15C6.75,6.15 7.59,5.88 9.5,7.17C10.29,6.95 11.15,6.84 12,6.84C12.85,6.84 13.71,6.95 14.5,7.17C16.41,5.88 17.25,6.15 17.25,6.15C17.8,7.5 17.45,8.54 17.35,8.79C18,9.5 18.38,10.39 18.38,11.5C18.38,15.32 16.04,16.16 13.81,16.41C14.17,16.72 14.5,17.33 14.5,18.26C14.5,19.6 14.5,20.68 14.5,21C14.5,21.27 14.66,21.59 15.17,21.5C19.14,20.16 22,16.42 22,12A10,10 0 0,0 12,2Z"
+                                              Fill="#8B949E" Stretch="Uniform" Width="11" Height="11" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding}" FontSize="12" Foreground="#C9D1D9" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- GitHub link -->
+                        <Button Content="View GitHub Profile" Margin="0,16,0,0"
+                                Cursor="Hand" HorizontalAlignment="Stretch"
+                                Click="ProfileGitHubLink_Click">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="GhBtnBg" CornerRadius="6" BorderBrush="#30363D"
+                                            BorderThickness="1" Background="Transparent" Padding="10,8">
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                            <Path Data="M12,2A10,10 0 0,0 2,12C2,16.42 4.87,20.17 8.84,21.5C9.34,21.58 9.5,21.27 9.5,21C9.5,20.77 9.5,20.14 9.5,19.31C6.73,19.91 6.14,17.97 6.14,17.97C5.68,16.81 5.03,16.5 5.03,16.5C4.12,15.88 5.1,15.9 5.1,15.9C6.1,15.97 6.63,16.93 6.63,16.93C7.5,18.45 8.97,18 9.54,17.76C9.63,17.11 9.89,16.67 10.17,16.42C7.95,16.17 5.62,15.31 5.62,11.5C5.62,10.39 6,9.5 6.65,8.79C6.55,8.54 6.2,7.5 6.75,6.15C6.75,6.15 7.59,5.88 9.5,7.17C10.29,6.95 11.15,6.84 12,6.84C12.85,6.84 13.71,6.95 14.5,7.17C16.41,5.88 17.25,6.15 17.25,6.15C17.8,7.5 17.45,8.54 17.35,8.79C18,9.5 18.38,10.39 18.38,11.5C18.38,15.32 16.04,16.16 13.81,16.41C14.17,16.72 14.5,17.33 14.5,18.26C14.5,19.6 14.5,20.68 14.5,21C14.5,21.27 14.66,21.59 15.17,21.5C19.14,20.16 22,16.42 22,12A10,10 0 0,0 12,2Z"
+                                                  Fill="#8B949E" Stretch="Uniform" Width="13" Height="13"
+                                                  Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                            <ContentPresenter VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="GhBtnBg" Property="Background" Value="#21262D"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                            <Button.Foreground>
+                                <SolidColorBrush Color="#8B949E"/>
+                            </Button.Foreground>
+                        </Button>
+                    </StackPanel>
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
     </Grid>
 
 </Window>
