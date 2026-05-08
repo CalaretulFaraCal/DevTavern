@@ -726,10 +726,50 @@
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
                                                     <StackPanel Orientation="Horizontal" Margin="0,2" VerticalAlignment="Center">
-                                                        <!-- Person icon -->
-                                                        <Path Data="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"
-                                                              Fill="#8B949E" Stretch="Uniform" Width="12" Height="12"
-                                                              Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                                        <!-- Speaking indicator -->
+                                                        <Ellipse Width="7" Height="7" Margin="0,0,5,0" VerticalAlignment="Center">
+                                                            <Ellipse.Style>
+                                                                <Style TargetType="Ellipse">
+                                                                    <Setter Property="Fill" Value="#484F58"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsSpeaking}" Value="True">
+                                                                            <Setter Property="Fill" Value="#3FB950"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Ellipse.Style>
+                                                        </Ellipse>
+                                                        <!-- Avatar or fallback icon -->
+                                                        <Grid Width="16" Height="16" Margin="0,0,5,0" VerticalAlignment="Center">
+                                                            <Ellipse Width="16" Height="16">
+                                                                <Ellipse.Style>
+                                                                    <Style TargetType="Ellipse">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding HasAvatar}" Value="False">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Ellipse.Style>
+                                                                <Ellipse.Fill>
+                                                                    <ImageBrush ImageSource="{Binding AvatarUrl}" Stretch="UniformToFill"/>
+                                                                </Ellipse.Fill>
+                                                            </Ellipse>
+                                                            <Path Data="M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z"
+                                                                  Fill="#8B949E" Stretch="Uniform" Width="16" Height="16" VerticalAlignment="Center">
+                                                                <Path.Style>
+                                                                    <Style TargetType="Path">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding HasAvatar}" Value="False">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Path.Style>
+                                                            </Path>
+                                                        </Grid>
                                                         <!-- Username -->
                                                         <TextBlock Text="{Binding Username}" FontSize="12" Foreground="#8B949E" VerticalAlignment="Center"/>
                                                         <!-- Muted indicator -->
@@ -765,7 +805,11 @@
                         </Grid.ColumnDefinitions>
                         <!-- Status text -->
                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="Voice Connected" FontSize="11" FontWeight="SemiBold" Foreground="#3FB950"/>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Ellipse x:Name="TransmittingDot" Width="8" Height="8" Margin="0,0,6,0"
+                                         Fill="#484F58" VerticalAlignment="Center"/>
+                                <TextBlock Text="Voice Connected" FontSize="11" FontWeight="SemiBold" Foreground="#3FB950"/>
+                            </StackPanel>
                             <TextBlock x:Name="VoiceConnectedChannelName" FontSize="11" Foreground="#8B949E" TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
                         <!-- Controls: mute, deafen, leave -->
@@ -2009,10 +2053,10 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="Input Sensitivity" FontSize="12" Foreground="#8B949E" VerticalAlignment="Center"/>
                                     <TextBlock Grid.Column="1" FontSize="12" Foreground="#E6EDF3" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                               Text="{Binding Value, ElementName=SensitivitySlider, StringFormat={}{0:F0}%}"/>
+                                               Text="{Binding Value, ElementName=SensitivitySlider, StringFormat={}{0:F0} dB}"/>
                                 </Grid>
                                 <Slider x:Name="SensitivitySlider" Style="{StaticResource VoiceSlider}"
-                                        Minimum="0" Maximum="100" Value="50"/>
+                                        Minimum="-100" Maximum="0" Value="-40"/>
                                 <TextBlock Text="Your voice will automatically activate the microphone above the set threshold."
                                            FontSize="11" Foreground="#8B949E" Margin="0,6,0,0" TextWrapping="Wrap"/>
                             </StackPanel>

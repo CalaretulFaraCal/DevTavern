@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
@@ -48,6 +49,14 @@ namespace DevTavern.Client
         private bool _isDeafened = false;
         private bool _capturingPttKey = false;
         private string _pttKey = "Caps Lock";
+        private bool _isPttActive = false;
+        private double _inputVolumeScale = 1.0;
+        private double _outputVolumeScale = 1.0;
+        private bool _isVadMode = true;
+        private double _vadThresholdRms = 0;
+        private static readonly string _voiceSettingsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevTavern", "voice_settings.json");
+        private readonly Dictionary<string, CancellationTokenSource> _speakingTimers = new();
 
         // NAudio Voice Chat properties
         private WaveInEvent? _waveIn;
@@ -266,13 +275,34 @@ namespace DevTavern.Client
             // Primim stream audio de la alti utilizatori din canalul de voce
             _hubConnection.On<string, byte[]>("ReceiveAudioBuffer", (senderUsername, audioData) =>
             {
-                Application.Current.Dispatcher.Invoke(() =>
+                Application.Current?.Dispatcher.Invoke(() =>
                 {
-                    if (_isDeafened) return;
-                    if (_waveProvider != null)
+                    if (!_isDeafened && _waveProvider != null)
                     {
+                        if (Math.Abs(_outputVolumeScale - 1.0) > 0.01)
+                        {
+                            for (int i = 0; i < audioData.Length - 1; i += 2)
+                            {
+                                int sample = BitConverter.ToInt16(audioData, i);
+                                sample = Math.Clamp((int)(sample * _outputVolumeScale), short.MinValue, short.MaxValue);
+                                audioData[i] = (byte)(sample & 0xFF);
+                                audioData[i + 1] = (byte)((sample >> 8) & 0xFF);
+                            }
+                        }
                         try { _waveProvider.AddSamples(audioData, 0, audioData.Length); } catch { }
                     }
+
+                    var member = FindVoiceMember(senderUsername);
+                    if (member == null) return;
+                    member.IsSpeaking = true;
+
+                    if (_speakingTimers.TryGetValue(senderUsername, out var existing))
+                        existing.Cancel();
+                    var cts = new CancellationTokenSource();
+                    _speakingTimers[senderUsername] = cts;
+                    _ = Task.Delay(400, cts.Token).ContinueWith(_ =>
+                        Application.Current?.Dispatcher.BeginInvoke(() => member.IsSpeaking = false),
+                        TaskContinuationOptions.OnlyOnRanToCompletion);
                 });
             });
 
@@ -283,7 +313,7 @@ namespace DevTavern.Client
                     var channel = FindVoiceChannelByKey(channelKey);
                     if (channel == null) return;
                     if (channel.VoiceMembers.Any(m => m.Username == joinedUsername)) return;
-                    channel.VoiceMembers.Add(new VoiceMember { Username = joinedUsername });
+                    channel.VoiceMembers.Add(new VoiceMember { Username = joinedUsername, AvatarUrl = GetAvatarUrl(joinedUsername) });
                 });
             });
 
@@ -295,6 +325,19 @@ namespace DevTavern.Client
                     if (channel == null) return;
                     var member = channel.VoiceMembers.FirstOrDefault(m => m.Username == leftUsername);
                     if (member != null) channel.VoiceMembers.Remove(member);
+                });
+            });
+
+            _hubConnection.On<string, string, bool, bool>("VoiceStateChanged", (channelKey, username, isMuted, isDeafened) =>
+            {
+                Application.Current?.Dispatcher.Invoke(() =>
+                {
+                    var channel = FindVoiceChannelByKey(channelKey);
+                    if (channel == null) return;
+                    var member = channel.VoiceMembers.FirstOrDefault(m => m.Username == username);
+                    if (member == null) return;
+                    member.IsMuted = isMuted;
+                    member.IsDeafened = isDeafened;
                 });
             });
 
@@ -437,6 +480,15 @@ namespace DevTavern.Client
                         _channelToProject[ch.Id] = proj.name;
             }
             StartNotificationPolling();
+
+            PopulateAudioDevices();
+            LoadVoiceSettings();
+            _inputVolumeScale = InputVolumeSlider.Value / 100.0;
+            _outputVolumeScale = OutputVolumeSlider.Value / 100.0;
+            _vadThresholdRms = 32767.0 * Math.Pow(10.0, SensitivitySlider.Value / 20.0);
+            InputVolumeSlider.ValueChanged += (s, e2) => _inputVolumeScale = InputVolumeSlider.Value / 100.0;
+            OutputVolumeSlider.ValueChanged += (s, e2) => _outputVolumeScale = OutputVolumeSlider.Value / 100.0;
+            SensitivitySlider.ValueChanged += (s, e2) => _vadThresholdRms = 32767.0 * Math.Pow(10.0, SensitivitySlider.Value / 20.0);
         }
 
         private string GenerateIconLetters(string name)
@@ -493,16 +545,21 @@ namespace DevTavern.Client
 
                 // Voice channels — pre-generate "General" on first load
                 if (!_projectVoiceChannels.ContainsKey(selected.name))
+                {
                     _projectVoiceChannels[selected.name] = new ObservableCollection<ChannelItem>
                     {
                         new ChannelItem { Id = _nextVoiceChannelId--, Name = "General", VoiceGroupKey = $"{selected.DbId}_General" }
                     };
+                }
                 else
                 {
-                    // Asigura-te ca VoiceGroupKey e setat (pentru intrari create inainte de acest fix)
+                    // Actualizeaza cheia daca DbId s-a schimbat (ex: prima selectie era cu DbId=0)
                     foreach (var ch in _projectVoiceChannels[selected.name])
-                        if (string.IsNullOrEmpty(ch.VoiceGroupKey))
-                            ch.VoiceGroupKey = $"{selected.DbId}_{ch.Name}";
+                    {
+                        var expectedKey = $"{selected.DbId}_{ch.Name}";
+                        if (ch.VoiceGroupKey != expectedKey)
+                            ch.VoiceGroupKey = expectedKey;
+                    }
                 }
                 VoiceChannelsSectionHeader.Visibility = Visibility.Visible;
                 VoiceChannelList.Visibility = Visibility.Visible;
@@ -516,7 +573,7 @@ namespace DevTavern.Client
                         ch.VoiceMembers.Clear();
                         // Daca userul e deja conectat in acest canal, re-adauga-l imediat
                         if (ch == _currentVoiceChannel)
-                            ch.VoiceMembers.Add(new VoiceMember { Username = _username });
+                            ch.VoiceMembers.Add(new VoiceMember { Username = _username, AvatarUrl = _avatarUrl });
                     }
                 }
                 if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
@@ -801,14 +858,10 @@ namespace DevTavern.Client
             if (VoiceChannelList.SelectedItem is not ChannelItem selected) return;
             VoiceChannelList.SelectedIndex = -1;
 
-            if (_currentVoiceChannel == selected)
-            {
-                LeaveCurrentVoiceChannel();
-                return;
-            }
+            if (_currentVoiceChannel == selected) return;
             LeaveCurrentVoiceChannel();
             selected.IsJoined = true;
-            selected.VoiceMembers.Add(new VoiceMember { Username = _username });
+            selected.VoiceMembers.Add(new VoiceMember { Username = _username, AvatarUrl = _avatarUrl });
             _currentVoiceChannel = selected;
             var projectDbId = _projects.FirstOrDefault(p => p.name == _selectedProject)?.DbId ?? 0;
             _currentVoiceGroupKey = $"{projectDbId}_{selected.Name}";
@@ -823,11 +876,33 @@ namespace DevTavern.Client
             StartAudioCaptureAndPlayback();
         }
 
-        private ChannelItem? FindVoiceChannelByKey(string channelKey)
+        private VoiceMember? FindVoiceMember(string username)
         {
             foreach (var channels in _projectVoiceChannels.Values)
+                foreach (var ch in channels)
+                {
+                    var m = ch.VoiceMembers.FirstOrDefault(v => v.Username == username);
+                    if (m != null) return m;
+                }
+            return null;
+        }
+
+        private string? GetAvatarUrl(string username)
+        {
+            if (username == _username) return _avatarUrl;
+            foreach (var members in _projectMembers.Values)
             {
-                var ch = channels.FirstOrDefault(c => c.VoiceGroupKey == channelKey);
+                var m = members.FirstOrDefault(x => x.Username == username);
+                if (!string.IsNullOrEmpty(m?.AvatarUrl)) return m.AvatarUrl;
+            }
+            return null;
+        }
+
+        private ChannelItem? FindVoiceChannelByKey(string channelKey)
+        {
+            foreach (var kvp in _projectVoiceChannels)
+            {
+                var ch = kvp.Value.FirstOrDefault(c => c.VoiceGroupKey == channelKey);
                 if (ch != null) return ch;
             }
             return null;
@@ -837,27 +912,67 @@ namespace DevTavern.Client
         {
             try
             {
-                _waveIn = new WaveInEvent();
+                _waveIn = new WaveInEvent { DeviceNumber = GetWaveInDeviceIndex(InputDeviceCombo.SelectedItem?.ToString()) };
                 _waveIn.WaveFormat = new WaveFormat(44100, 16, 1);
                 _waveIn.BufferMilliseconds = 100;
                 _waveIn.DataAvailable += async (s, args) =>
                 {
-                    if (_isMuted || _currentVoiceChannel == null || _currentVoiceGroupKey == null || _hubConnection == null || _hubConnection.State != HubConnectionState.Connected) return;
+                    bool transmitting = false;
 
-                    byte[] buffer = new byte[args.BytesRecorded];
-                    Array.Copy(args.Buffer, buffer, args.BytesRecorded);
-
-                    try
+                    if (!_isMuted && _currentVoiceChannel != null && _currentVoiceGroupKey != null
+                        && _hubConnection != null && _hubConnection.State == HubConnectionState.Connected
+                        && (_isVadMode || _isPttActive))
                     {
-                        await _hubConnection.InvokeAsync("SendAudioBuffer", _currentVoiceGroupKey, _username, buffer);
+                        byte[] buffer = new byte[args.BytesRecorded];
+                        Array.Copy(args.Buffer, buffer, args.BytesRecorded);
+
+                        // Apply input volume scaling
+                        if (Math.Abs(_inputVolumeScale - 1.0) > 0.01)
+                        {
+                            for (int i = 0; i < buffer.Length - 1; i += 2)
+                            {
+                                int sample = BitConverter.ToInt16(buffer, i);
+                                sample = Math.Clamp((int)(sample * _inputVolumeScale), short.MinValue, short.MaxValue);
+                                buffer[i] = (byte)(sample & 0xFF);
+                                buffer[i + 1] = (byte)((sample >> 8) & 0xFF);
+                            }
+                        }
+
+                        // VAD gate: in VAD mode, only send if RMS exceeds threshold
+                        bool vadPassed = !_isVadMode;
+                        if (_isVadMode)
+                        {
+                            double sumSq = 0;
+                            int count = buffer.Length / 2;
+                            for (int i = 0; i < buffer.Length - 1; i += 2)
+                            {
+                                double sample = BitConverter.ToInt16(buffer, i);
+                                sumSq += sample * sample;
+                            }
+                            vadPassed = Math.Sqrt(sumSq / count) >= _vadThresholdRms;
+                        }
+
+                        if (vadPassed)
+                        {
+                            transmitting = true;
+                            try { await _hubConnection.InvokeAsync("SendAudioBuffer", _currentVoiceGroupKey, _username, buffer); } catch { }
+                        }
                     }
-                    catch { }
+
+                    Application.Current?.Dispatcher.BeginInvoke(() =>
+                    {
+                        TransmittingDot.Fill = new SolidColorBrush(transmitting
+                            ? Color.FromRgb(0x3F, 0xB9, 0x50)
+                            : Color.FromRgb(0x48, 0x4F, 0x58));
+                        var localMember = FindVoiceMember(_username);
+                        if (localMember != null) localMember.IsSpeaking = transmitting;
+                    });
                 };
 
                 _waveProvider = new BufferedWaveProvider(new WaveFormat(44100, 16, 1));
                 _waveProvider.DiscardOnBufferOverflow = true;
 
-                _waveOut = new WaveOutEvent();
+                _waveOut = new WaveOutEvent { DeviceNumber = GetWaveOutDeviceIndex(OutputDeviceCombo.SelectedItem?.ToString()) };
                 _waveOut.Init(_waveProvider);
 
                 _waveOut.Play();
@@ -885,7 +1000,8 @@ namespace DevTavern.Client
                 }
 
                 leavingChannel.IsJoined = false;
-                leavingChannel.VoiceMembers.Clear();
+                var selfMember = leavingChannel.VoiceMembers.FirstOrDefault(m => m.Username == _username);
+                if (selfMember != null) leavingChannel.VoiceMembers.Remove(selfMember);
             }
             VoiceConnectedBar.Visibility = Visibility.Collapsed;
             ResetMuteDeafen();
@@ -918,7 +1034,7 @@ namespace DevTavern.Client
             DeafenIcon.Fill = new SolidColorBrush(Color.FromRgb(0x8B, 0x94, 0x9E));
         }
 
-        private void MuteVoice_Click(object sender, RoutedEventArgs e)
+        private async void MuteVoice_Click(object sender, RoutedEventArgs e)
         {
             _isMuted = !_isMuted;
             MuteIcon.Fill = new SolidColorBrush(_isMuted
@@ -926,9 +1042,11 @@ namespace DevTavern.Client
                 : Color.FromRgb(0x8B, 0x94, 0x9E));
             var me = _currentVoiceChannel?.VoiceMembers.FirstOrDefault(m => m.Username == _username);
             if (me != null) me.IsMuted = _isMuted;
+            if (_currentVoiceGroupKey != null && _hubConnection?.State == HubConnectionState.Connected)
+                try { await _hubConnection.InvokeAsync("BroadcastVoiceState", _currentVoiceGroupKey, _username, _isMuted, _isDeafened); } catch { }
         }
 
-        private void DeafenVoice_Click(object sender, RoutedEventArgs e)
+        private async void DeafenVoice_Click(object sender, RoutedEventArgs e)
         {
             _isDeafened = !_isDeafened;
             DeafenIcon.Fill = new SolidColorBrush(_isDeafened
@@ -936,6 +1054,8 @@ namespace DevTavern.Client
                 : Color.FromRgb(0x8B, 0x94, 0x9E));
             var me = _currentVoiceChannel?.VoiceMembers.FirstOrDefault(m => m.Username == _username);
             if (me != null) me.IsDeafened = _isDeafened;
+            if (_currentVoiceGroupKey != null && _hubConnection?.State == HubConnectionState.Connected)
+                try { await _hubConnection.InvokeAsync("BroadcastVoiceState", _currentVoiceGroupKey, _username, _isMuted, _isDeafened); } catch { }
         }
 
         private void VoiceChannelList_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -951,40 +1071,125 @@ namespace DevTavern.Client
 
         private void PopulateAudioDevices()
         {
+            var prevInput = InputDeviceCombo.SelectedItem?.ToString();
+            var prevOutput = OutputDeviceCombo.SelectedItem?.ToString();
+
+            InputDeviceCombo.Items.Clear();
+            OutputDeviceCombo.Items.Clear();
+
             try
             {
                 var enumerator = new MMDeviceEnumerator();
-
-                InputDeviceCombo.Items.Clear();
-                InputDeviceCombo.Items.Add("Default");
                 foreach (var d in enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active))
                     InputDeviceCombo.Items.Add(d.FriendlyName);
-                if (InputDeviceCombo.SelectedIndex < 0) InputDeviceCombo.SelectedIndex = 0;
-
-                OutputDeviceCombo.Items.Clear();
-                OutputDeviceCombo.Items.Add("Default");
                 foreach (var d in enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
                     OutputDeviceCombo.Items.Add(d.FriendlyName);
-                if (OutputDeviceCombo.SelectedIndex < 0) OutputDeviceCombo.SelectedIndex = 0;
             }
-            catch
+            catch { }
+
+            if (InputDeviceCombo.Items.Count == 0) InputDeviceCombo.Items.Add("No input device");
+            if (OutputDeviceCombo.Items.Count == 0) OutputDeviceCombo.Items.Add("No output device");
+
+            RestoreDeviceSelection(prevInput, prevOutput);
+        }
+
+        private int GetWaveInDeviceIndex(string? friendlyName)
+        {
+            if (string.IsNullOrEmpty(friendlyName)) return 0;
+            for (int i = 0; i < WaveIn.DeviceCount; i++)
             {
-                if (InputDeviceCombo.Items.Count == 0) InputDeviceCombo.Items.Add("Default");
-                if (OutputDeviceCombo.Items.Count == 0) OutputDeviceCombo.Items.Add("Default");
-                InputDeviceCombo.SelectedIndex = 0;
-                OutputDeviceCombo.SelectedIndex = 0;
+                var name = WaveIn.GetCapabilities(i).ProductName;
+                if (friendlyName.Contains(name, StringComparison.OrdinalIgnoreCase)) return i;
             }
+            return 0;
+        }
+
+        private int GetWaveOutDeviceIndex(string? friendlyName)
+        {
+            if (string.IsNullOrEmpty(friendlyName)) return 0;
+            for (int i = 0; i < WaveOut.DeviceCount; i++)
+            {
+                var name = WaveOut.GetCapabilities(i).ProductName;
+                if (friendlyName.Contains(name, StringComparison.OrdinalIgnoreCase)) return i;
+            }
+            return 0;
+        }
+
+        private void RestoreDeviceSelection(string? inputName, string? outputName)
+        {
+            InputDeviceCombo.SelectedIndex = 0;
+            for (int i = 0; i < InputDeviceCombo.Items.Count; i++)
+                if (InputDeviceCombo.Items[i]?.ToString() == inputName) { InputDeviceCombo.SelectedIndex = i; break; }
+
+            OutputDeviceCombo.SelectedIndex = 0;
+            for (int i = 0; i < OutputDeviceCombo.Items.Count; i++)
+                if (OutputDeviceCombo.Items[i]?.ToString() == outputName) { OutputDeviceCombo.SelectedIndex = i; break; }
+        }
+
+        private void LoadVoiceSettings()
+        {
+            try
+            {
+                if (!File.Exists(_voiceSettingsPath)) return;
+                var s = JsonConvert.DeserializeObject<VoiceSettings>(File.ReadAllText(_voiceSettingsPath));
+                if (s == null) return;
+
+                InputVolumeSlider.Value = s.InputVolume;
+                OutputVolumeSlider.Value = s.OutputVolume;
+                SensitivitySlider.Value = s.Sensitivity;
+                _pttKey = s.PttKey;
+                PttKeyDisplay.Text = s.PttKey;
+
+                if (s.IsPttMode) PttModeRadio.IsChecked = true;
+                else VadModeRadio.IsChecked = true;
+
+                RestoreDeviceSelection(s.InputDevice, s.OutputDevice);
+            }
+            catch { }
+        }
+
+        private void SaveVoiceSettings()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_voiceSettingsPath)!);
+                var s = new VoiceSettings
+                {
+                    InputVolume = InputVolumeSlider.Value,
+                    OutputVolume = OutputVolumeSlider.Value,
+                    Sensitivity = SensitivitySlider.Value,
+                    IsPttMode = PttModeRadio.IsChecked == true,
+                    PttKey = _pttKey,
+                    InputDevice = InputDeviceCombo.SelectedItem?.ToString() ?? "",
+                    OutputDevice = OutputDeviceCombo.SelectedItem?.ToString() ?? ""
+                };
+                File.WriteAllText(_voiceSettingsPath, JsonConvert.SerializeObject(s, Formatting.Indented));
+            }
+            catch { }
+        }
+
+        private class VoiceSettings
+        {
+            public double InputVolume { get; set; } = 100;
+            public double OutputVolume { get; set; } = 100;
+            public double Sensitivity { get; set; } = -40;
+            public bool IsPttMode { get; set; } = false;
+            public string PttKey { get; set; } = "Caps Lock";
+            public string InputDevice { get; set; } = "";
+            public string OutputDevice { get; set; } = "";
         }
 
         private void VoiceSettingsOverlay_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (_capturingPttKey) { _capturingPttKey = false; PttCaptureHint.Visibility = Visibility.Collapsed; PttKeyButton.IsEnabled = true; }
+            SaveVoiceSettings();
             VoiceSettingsOverlay.Visibility = Visibility.Collapsed;
         }
 
         private void CloseVoiceSettings_Click(object sender, RoutedEventArgs e)
         {
             if (_capturingPttKey) { _capturingPttKey = false; PttCaptureHint.Visibility = Visibility.Collapsed; PttKeyButton.IsEnabled = true; }
+            SaveVoiceSettings();
             VoiceSettingsOverlay.Visibility = Visibility.Collapsed;
         }
 
@@ -993,6 +1198,7 @@ namespace DevTavern.Client
             if (SensitivityPanel == null) return;
             SensitivityPanel.Visibility = Visibility.Visible;
             PttKeyPanel.Visibility = Visibility.Collapsed;
+            _isVadMode = true;
         }
 
         private void PttMode_Checked(object sender, RoutedEventArgs e)
@@ -1000,6 +1206,7 @@ namespace DevTavern.Client
             if (PttKeyPanel == null) return;
             SensitivityPanel.Visibility = Visibility.Collapsed;
             PttKeyPanel.Visibility = Visibility.Visible;
+            _isVadMode = false;
         }
 
         private void PttKeyButton_Click(object sender, RoutedEventArgs e)
@@ -1024,7 +1231,24 @@ namespace DevTavern.Client
                 }
                 return;
             }
+
+            if (!_isVadMode && !_isPttActive)
+            {
+                var keyStr = new KeyConverter().ConvertToString(e.Key) ?? e.Key.ToString();
+                if (keyStr == _pttKey) _isPttActive = true;
+            }
+
             base.OnPreviewKeyDown(e);
+        }
+
+        protected override void OnPreviewKeyUp(KeyEventArgs e)
+        {
+            if (!_isVadMode && _isPttActive)
+            {
+                var keyStr = new KeyConverter().ConvertToString(e.Key) ?? e.Key.ToString();
+                if (keyStr == _pttKey) _isPttActive = false;
+            }
+            base.OnPreviewKeyUp(e);
         }
 
         protected override void OnPreviewMouseDown(MouseButtonEventArgs e)
@@ -1047,7 +1271,40 @@ namespace DevTavern.Client
                 PttKeyDisplay.Text = _pttKey;
                 return;
             }
+
+            if (!_isVadMode && !_isPttActive)
+            {
+                var mouseStr = e.ChangedButton switch
+                {
+                    MouseButton.Left     => "Mouse Left",
+                    MouseButton.Right    => "Mouse Right",
+                    MouseButton.Middle   => "Mouse Middle",
+                    MouseButton.XButton1 => "Mouse 4",
+                    MouseButton.XButton2 => "Mouse 5",
+                    _ => e.ChangedButton.ToString()
+                };
+                if (mouseStr == _pttKey) _isPttActive = true;
+            }
+
             base.OnPreviewMouseDown(e);
+        }
+
+        protected override void OnPreviewMouseUp(MouseButtonEventArgs e)
+        {
+            if (!_isVadMode && _isPttActive)
+            {
+                var mouseStr = e.ChangedButton switch
+                {
+                    MouseButton.Left     => "Mouse Left",
+                    MouseButton.Right    => "Mouse Right",
+                    MouseButton.Middle   => "Mouse Middle",
+                    MouseButton.XButton1 => "Mouse 4",
+                    MouseButton.XButton2 => "Mouse 5",
+                    _ => e.ChangedButton.ToString()
+                };
+                if (mouseStr == _pttKey) _isPttActive = false;
+            }
+            base.OnPreviewMouseUp(e);
         }
 
         private void LeaveVoiceChannel_Click(object sender, RoutedEventArgs e)
@@ -1536,6 +1793,9 @@ namespace DevTavern.Client
 
         private async void LogoutButton_Click(object sender, RoutedEventArgs e)
         {
+            var result = MessageBox.Show("Are you sure you want to log out?", "Logout", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result != MessageBoxResult.Yes) return;
+
             // Disconnect SignalR
             if (_hubConnection != null)
             {
@@ -2411,6 +2671,16 @@ namespace DevTavern.Client
             get => _isDeafened;
             set { _isDeafened = value; OnPropertyChanged(); }
         }
+
+        private bool _isSpeaking;
+        public bool IsSpeaking
+        {
+            get => _isSpeaking;
+            set { _isSpeaking = value; OnPropertyChanged(); }
+        }
+
+        public string? AvatarUrl { get; set; } = null;
+        public bool HasAvatar => !string.IsNullOrEmpty(AvatarUrl);
 
         public event PropertyChangedEventHandler? PropertyChanged;
         private void OnPropertyChanged([CallerMemberName] string? propName = null)
