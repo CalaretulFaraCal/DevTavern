@@ -15,6 +15,8 @@ namespace DevTavern.Server.Hubs
         private static readonly ConcurrentDictionary<string, HashSet<string>> _voiceChannelMembers = new();
         // ConnectionId -> (channelKey, username)
         private static readonly ConcurrentDictionary<string, (string channelKey, string username)> _connectionVoiceChannel = new();
+        // "channelKey|username" -> (isMuted, isDeafened)
+        private static readonly ConcurrentDictionary<string, (bool isMuted, bool isDeafened)> _voiceStates = new();
 
         // channelKey = "{projectId}_{channelName}", deci projectId-ul se poate extrage
         private static string ProjectIdFromKey(string channelKey)
@@ -40,6 +42,8 @@ namespace DevTavern.Server.Hubs
             {
                 if (_voiceChannelMembers.TryGetValue(voiceInfo.channelKey, out var members))
                     lock (members) { members.Remove(voiceInfo.username); }
+
+                _voiceStates.TryRemove($"{voiceInfo.channelKey}|{voiceInfo.username}", out _);
 
                 await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"VoiceChannel_{voiceInfo.channelKey}");
 
@@ -92,9 +96,13 @@ namespace DevTavern.Server.Hubs
 
             var projectId = ProjectIdFromKey(channelKey);
 
-            // Trimite celui care intra cate un UserJoinedVoice pentru fiecare user deja prezent
+            // Trimite celui care intra cate un UserJoinedVoice + VoiceStateChanged pentru fiecare user deja prezent
             foreach (var existingUser in existing)
+            {
                 await Clients.Caller.SendAsync("UserJoinedVoice", channelKey, existingUser);
+                if (_voiceStates.TryGetValue($"{channelKey}|{existingUser}", out var state) && (state.isMuted || state.isDeafened))
+                    await Clients.Caller.SendAsync("VoiceStateChanged", channelKey, existingUser, state.isMuted, state.isDeafened);
+            }
 
             // Anunta tot proiectul ca a intrat un nou user
             await Clients.Group($"Project_{projectId}").SendAsync("UserJoinedVoice", channelKey, username);
@@ -105,6 +113,7 @@ namespace DevTavern.Server.Hubs
             if (_voiceChannelMembers.TryGetValue(channelKey, out var members))
                 lock (members) { members.Remove(username); }
 
+            _voiceStates.TryRemove($"{channelKey}|{username}", out _);
             _connectionVoiceChannel.TryRemove(Context.ConnectionId, out _);
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"VoiceChannel_{channelKey}");
 
@@ -112,10 +121,17 @@ namespace DevTavern.Server.Hubs
             await Clients.Group($"Project_{projectId}").SendAsync("UserLeftVoice", channelKey, username);
         }
 
+        public async Task BroadcastVoiceState(string channelKey, string username, bool isMuted, bool isDeafened)
+        {
+            _voiceStates[$"{channelKey}|{username}"] = (isMuted, isDeafened);
+            var projectId = ProjectIdFromKey(channelKey);
+            await Clients.Group($"Project_{projectId}").SendAsync("VoiceStateChanged", channelKey, username, isMuted, isDeafened);
+        }
+
         public async Task SendAudioBuffer(string channelKey, string username, byte[] audioData)
             => await Clients.GroupExcept($"VoiceChannel_{channelKey}", Context.ConnectionId).SendAsync("ReceiveAudioBuffer", username, audioData);
 
-        // Trimite caller-ului cate un UserJoinedVoice pentru fiecare user deja conectat in canalele de voce ale proiectului
+        // Trimite caller-ului cate un UserJoinedVoice + VoiceStateChanged pentru fiecare user deja conectat in canalele de voce ale proiectului
         public async Task RequestProjectVoiceSnapshot(string projectId)
         {
             foreach (var kvp in _voiceChannelMembers)
@@ -124,7 +140,11 @@ namespace DevTavern.Server.Hubs
                 List<string> snapshot;
                 lock (kvp.Value) { snapshot = kvp.Value.ToList(); }
                 foreach (var u in snapshot)
+                {
                     await Clients.Caller.SendAsync("UserJoinedVoice", kvp.Key, u);
+                    if (_voiceStates.TryGetValue($"{kvp.Key}|{u}", out var state) && (state.isMuted || state.isDeafened))
+                        await Clients.Caller.SendAsync("VoiceStateChanged", kvp.Key, u, state.isMuted, state.isDeafened);
+                }
             }
         }
     }

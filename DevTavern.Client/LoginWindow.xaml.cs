@@ -83,7 +83,9 @@ namespace DevTavern.Client
                     }
 
                     // Perform skip
+                    StatusText.Text = "Loading workspace...";
                     var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId);
+                    await mainWindow.InitializeAsync();
                     mainWindow.Show();
                     this.Close();
                 }
@@ -222,7 +224,9 @@ namespace DevTavern.Client
             }
             catch { }
 
+            StatusText.Text = "Loading workspace...";
             var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId);
+            await mainWindow.InitializeAsync();
             mainWindow.Show();
             this.Close();
         }

@@ -125,10 +125,9 @@ namespace DevTavern.Client
             // Show home view on startup
             ShowHomeView();
 
-            this.Loaded += MainWindow_Loaded;
         }
 
-        private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        public async Task InitializeAsync()
         {
             // ---- SignalR Init ----
             _hubConnection = new HubConnectionBuilder()

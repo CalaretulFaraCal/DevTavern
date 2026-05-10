@@ -4,6 +4,7 @@
         xmlns:local="clr-namespace:DevTavern.Client"
         xmlns:avalonedit="clr-namespace:ICSharpCode.AvalonEdit;assembly=ICSharpCode.AvalonEdit"
         Title="DevTavern" Height="700" Width="1100"
+        MinWidth="800" MinHeight="500"
         WindowStartupLocation="CenterScreen"
         Background="#0D1117"
         PreviewMouseDown="Window_PreviewMouseDown">
