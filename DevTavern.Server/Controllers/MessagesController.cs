@@ -51,6 +51,49 @@ namespace DevTavern.Server.Controllers
 
             return Ok(newMessage);
         }
+
+        public class EditMessageDto
+        {
+            public string Content { get; set; } = string.Empty;
+        }
+
+        // PUT /api/messages/{id} - edit a message
+        [HttpPut("{id}")]
+        public async Task<IActionResult> EditMessage(int id, [FromBody] EditMessageDto request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Content)) return BadRequest("Mesajul nu poate fi gol.");
+
+            var message = await _messageRepository.GetByIdAsync(id);
+            if (message == null) return NotFound();
+
+            if (message.IsDeleted) return BadRequest("Mesajul a fost sters.");
+
+            message.Content = request.Content;
+            message.IsEdited = true;
+
+            _messageRepository.Update(message);
+            await _messageRepository.SaveChangesAsync();
+
+            return NoContent();
+        }
+
+        // DELETE /api/messages/{id} - soft delete a message
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteMessage(int id)
+        {
+            var message = await _messageRepository.GetByIdAsync(id);
+            if (message == null) return NotFound();
+
+            if (message.IsDeleted) return BadRequest("Mesajul a fost deja sters.");
+
+            message.IsDeleted = true;
+            message.Content = "[Acest mesaj a fost sters]";
+
+            _messageRepository.Update(message);
+            await _messageRepository.SaveChangesAsync();
+
+            return NoContent();
+        }
     }
 }
 

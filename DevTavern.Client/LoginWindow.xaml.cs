@@ -50,6 +50,7 @@ namespace DevTavern.Client
                     string username = "user";
                     string avatarUrl = "";
                     string githubId = "";
+                    string displayName = "";
                     int currentUserId = 0;
 
                     using var client = new HttpClient();
@@ -58,6 +59,7 @@ namespace DevTavern.Client
                     var userResponse = await client.GetStringAsync("https://api.github.com/user");
                     var userJson = JObject.Parse(userResponse);
                     username = userJson["login"]?.ToString() ?? "user";
+                    displayName = userJson["name"]?.ToString() ?? username;
                     avatarUrl = userJson["avatar_url"]?.ToString() ?? "";
                     githubId = userJson["id"]?.ToString() ?? username;
 
@@ -72,7 +74,7 @@ namespace DevTavern.Client
                     }
                     else
                     {
-                        var postData = new { GitHubId = githubId, Username = username, AvatarUrl = avatarUrl };
+                        var postData = new { GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
                         var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
                         var createResp = await _apiClient.PostAsync("users", content);
                         if (createResp.IsSuccessStatusCode)
@@ -182,6 +184,7 @@ namespace DevTavern.Client
             string username = "user";
             string avatarUrl = "";
             string githubId = "";
+            string displayName = "";
             int currentUserId = 0;
             try
             {
@@ -191,6 +194,7 @@ namespace DevTavern.Client
                 var userResponse = await client.GetStringAsync("https://api.github.com/user");
                 var userJson = JObject.Parse(userResponse);
                 username = userJson["login"]?.ToString() ?? "user";
+                displayName = userJson["name"]?.ToString() ?? username;
                 avatarUrl = userJson["avatar_url"]?.ToString() ?? "";
                 githubId = userJson["id"]?.ToString() ?? username;
 
@@ -205,7 +209,7 @@ namespace DevTavern.Client
                 }
                 else
                 {
-                    var postData = new { GitHubId = githubId, Username = username, AvatarUrl = avatarUrl };
+                    var postData = new { GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
                     var content = new StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
                     var createResp = await _apiClient.PostAsync("users", content);
                     if (createResp.IsSuccessStatusCode)

@@ -12,6 +12,9 @@ namespace DevTavern.Server.Models
 
         public DateTime SentAt { get; set; } = DateTime.UtcNow;
 
+        public bool IsEdited { get; set; } = false;
+        public bool IsDeleted { get; set; } = false;
+
         public int UserId { get; set; }
         public User? User { get; set; }
 

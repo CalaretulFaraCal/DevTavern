@@ -13,6 +13,8 @@ namespace DevTavern.Server.Models
         [Required]
         public string Username { get; set; } = string.Empty;
 
+        public string? DisplayName { get; set; }
+
         public string? AvatarUrl { get; set; }
 
         public ICollection<Message> Messages { get; set; } = new List<Message>();

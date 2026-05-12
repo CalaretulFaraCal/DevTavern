@@ -76,9 +76,21 @@ namespace DevTavern.Server.Hubs
             => await Clients.Group($"Project_{projectId}").SendAsync("ChannelDeleted", channelId);
 
         public async Task SendLiveMessage(string channelId, string username, string avatarUrl, string messageContent)
-            => await Clients.Group($"Channel_{channelId}").SendAsync("ReceiveMessage", username, avatarUrl, messageContent);
+        {
+            await Clients.Group($"Channel_{channelId}").SendAsync("ReceiveMessage", username, avatarUrl, messageContent);
+        }
 
-        // ================= Voice Chat =================
+        public async Task EditMessageBroadcast(string channelId, int messageId, string newContent)
+        {
+            await Clients.Group($"Channel_{channelId}").SendAsync("MessageEdited", messageId, newContent);
+        }
+
+        public async Task DeleteMessageBroadcast(string channelId, int messageId)
+        {
+            await Clients.Group($"Channel_{channelId}").SendAsync("MessageDeleted", messageId);
+        }
+
+        // ================= Voice Chat (Walkie-Talkie) =================
 
         public async Task JoinVoiceChannel(string channelKey, string username)
         {

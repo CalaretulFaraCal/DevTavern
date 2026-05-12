@@ -5,7 +5,8 @@ namespace DevTavern.Server.Models
     public enum ChannelType
     {
         Project,
-        OffTopic
+        OffTopic,
+        Voice
     }
 
     public class Channel
