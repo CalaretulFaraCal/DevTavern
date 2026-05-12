@@ -73,7 +73,7 @@ namespace DevTavern.Server.Controllers
             existingUser.AvatarUrl = updatedUser.AvatarUrl;
             existingUser.Username = updatedUser.Username;
 
-            await _userRepository.UpdateAsync(existingUser);
+            _userRepository.Update(existingUser);
 
             return NoContent();
         }
