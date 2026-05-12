@@ -75,9 +75,23 @@ namespace DevTavern.Client
 
         public ObservableCollection<ChatMessage> Messages { get; set; } = new ObservableCollection<ChatMessage>();
 
+        private void PlaySound(string fileName)
+        {
+            try
+            {
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", fileName);
+                if (File.Exists(path))
+                {
+                    new System.Media.SoundPlayer(path).Play();
+                }
+            }
+            catch { /* Ignore missing sounds */ }
+        }
+
         public MainWindow(string accessToken, List<RepoItem> projects, string username, string avatarUrl, int currentUserId)
         {
             InitializeComponent();
+            PlaySound("sunet_deschidere.wav");
 
             _currentUserId = currentUserId;
             _apiClient = new HttpClient { BaseAddress = new Uri("https://devtavern.onrender.com/api/") };
@@ -140,6 +154,11 @@ namespace DevTavern.Client
                 Application.Current.Dispatcher.Invoke(() =>
                 {
                     if (senderUsername == _username) return;
+
+                    if (messageContent.Contains("@" + _username, StringComparison.OrdinalIgnoreCase))
+                        PlaySound("mention.wav");
+                    else
+                        PlaySound("mesaje.wav");
 
                     DateTime now = DateTime.Now;
                     var lastReal = Messages.LastOrDefault(m => !m.IsDateSeparator && !m.IsSystemMessage);
@@ -995,6 +1014,9 @@ namespace DevTavern.Client
             VoiceConnectedChannelName.Text = $"#{selected.Name}";
             VoiceConnectedBar.Visibility = Visibility.Visible;
 
+            // Redam sunetul INSTANT, inainte de delay-ul de la net
+            PlaySound("intrare_voice.wav");
+
             if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
             {
                 try { await _hubConnection.InvokeAsync("JoinVoiceChannel", _currentVoiceGroupKey, _username); } catch { }
@@ -1121,6 +1143,9 @@ namespace DevTavern.Client
                 _currentVoiceChannel = null;
                 _currentVoiceGroupKey = null;
 
+                // Redam sunetul INSTANT
+                PlaySound("iesire_voice.wav");
+
                 if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected && leavingKey != null)
                 {
                     try { await _hubConnection.InvokeAsync("LeaveVoiceChannel", leavingKey, _username); } catch { }
@@ -1164,6 +1189,9 @@ namespace DevTavern.Client
         private async void MuteVoice_Click(object sender, RoutedEventArgs e)
         {
             _isMuted = !_isMuted;
+            if (_isMuted) PlaySound("zavor_inchis.wav");
+            else PlaySound("zavor_deschis.wav");
+
             MuteIcon.Fill = new SolidColorBrush(_isMuted
                 ? Color.FromRgb(0xDA, 0x36, 0x33)
                 : Color.FromRgb(0x8B, 0x94, 0x9E));
@@ -1176,6 +1204,9 @@ namespace DevTavern.Client
         private async void DeafenVoice_Click(object sender, RoutedEventArgs e)
         {
             _isDeafened = !_isDeafened;
+            if (_isDeafened) PlaySound("zavor_inchis.wav");
+            else PlaySound("zavor_deschis.wav");
+
             DeafenIcon.Fill = new SolidColorBrush(_isDeafened
                 ? Color.FromRgb(0xDA, 0x36, 0x33)
                 : Color.FromRgb(0x8B, 0x94, 0x9E));
