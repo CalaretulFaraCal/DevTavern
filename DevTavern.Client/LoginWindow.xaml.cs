@@ -71,6 +71,9 @@ namespace DevTavern.Client
                     if (existingUser != null)
                     {
                         currentUserId = existingUser["id"]?.ToObject<int>() ?? 0;
+                        var putData = new { Id = currentUserId, GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
+                        var putContent = new StringContent(JsonConvert.SerializeObject(putData), System.Text.Encoding.UTF8, "application/json");
+                        await _apiClient.PutAsync($"users/{currentUserId}", putContent);
                     }
                     else
                     {
@@ -206,6 +209,9 @@ namespace DevTavern.Client
                 if (existingUser != null)
                 {
                     currentUserId = existingUser["id"]?.ToObject<int>() ?? 0;
+                    var putData = new { Id = currentUserId, GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
+                    var putContent = new StringContent(JsonConvert.SerializeObject(putData), System.Text.Encoding.UTF8, "application/json");
+                    await _apiClient.PutAsync($"users/{currentUserId}", putContent);
                 }
                 else
                 {
