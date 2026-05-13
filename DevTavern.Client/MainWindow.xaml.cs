@@ -31,6 +31,7 @@ namespace DevTavern.Client
         private readonly List<RepoItem> _projects;
         private readonly string _username;
         private readonly string _avatarUrl;
+        private readonly string _displayName;
 
         private string? _selectedProject;
         private int _selectedChannelId;
@@ -44,7 +45,6 @@ namespace DevTavern.Client
         private readonly Dictionary<string, ObservableCollection<ChannelItem>> _projectVoiceChannels = new();
         private ChannelItem? _currentVoiceChannel = null;
         private string? _currentVoiceGroupKey = null;
-        private int _nextVoiceChannelId = -1;
         private bool _isMuted = false;
         private bool _isDeafened = false;
         private bool _capturingPttKey = false;
@@ -88,7 +88,7 @@ namespace DevTavern.Client
             catch { /* Ignore missing sounds */ }
         }
 
-        public MainWindow(string accessToken, List<RepoItem> projects, string username, string avatarUrl, int currentUserId)
+        public MainWindow(string accessToken, List<RepoItem> projects, string username, string avatarUrl, int currentUserId, string displayName = "")
         {
             InitializeComponent();
             PlaySound("sunet_deschidere.wav");
@@ -100,6 +100,7 @@ namespace DevTavern.Client
             _projects = projects;
             _username = username;
             _avatarUrl = avatarUrl;
+            _displayName = string.IsNullOrEmpty(displayName) ? username : displayName;
 
             // Generate icon letters for each project
             foreach (var project in _projects)
@@ -143,6 +144,8 @@ namespace DevTavern.Client
 
         public async Task InitializeAsync()
         {
+            _fullNameCache[_username] = _displayName;
+
             // ---- SignalR Init ----
             _hubConnection = new HubConnectionBuilder()
                 .WithUrl("https://devtavern.onrender.com/chat")
@@ -250,6 +253,31 @@ namespace DevTavern.Client
                             }
                         }
                     }
+                });
+            });
+
+            _hubConnection.On<int, string>("MessageEdited", (messageId, newContent) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var msg = Messages.FirstOrDefault(m => m.MessageId == messageId);
+                    if (msg == null) return;
+                    msg.Content = newContent;
+                    msg.IsEdited = true;
+                    ParseMessageContent(msg);
+                });
+            });
+
+            _hubConnection.On<int>("MessageDeleted", (messageId) =>
+            {
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var msg = Messages.FirstOrDefault(m => m.MessageId == messageId);
+                    if (msg == null) return;
+                    msg.Content = "[Acest mesaj a fost sters]";
+                    msg.DisplayContent = "[Acest mesaj a fost sters]";
+                    msg.IsOwnMessage = false;
+                    msg.IsDeleted = true;
                 });
             });
 
@@ -392,16 +420,39 @@ namespace DevTavern.Client
                         if (cResp.IsSuccessStatusCode)
                         {
                             var cArr = JArray.Parse(await cResp.Content.ReadAsStringAsync());
-                            var channelsList = new ObservableCollection<ChannelItem>();
+                            var textChannels = new ObservableCollection<ChannelItem>();
+                            var voiceChannels = new ObservableCollection<ChannelItem>();
                             foreach (var c in cArr)
                             {
-                                channelsList.Add(new ChannelItem
+                                int chType = 0;
+                                var typeToken = c["type"];
+                                if (typeToken != null)
+                                {
+                                    if (typeToken.Type == JTokenType.Integer)
+                                        chType = typeToken.ToObject<int>();
+                                    else if (typeToken.Type == JTokenType.String)
+                                    {
+                                        var s = typeToken.ToString();
+                                        if (s == "Voice" || s == "2") chType = 2;
+                                        else if (s == "OffTopic" || s == "1") chType = 1;
+                                    }
+                                }
+                                var item = new ChannelItem
                                 {
                                     Id = c["id"]?.ToObject<int>() ?? 0,
-                                    Name = c["name"]?.ToString() ?? ""
-                                });
+                                    Name = c["name"]?.ToString() ?? "",
+                                    Type = chType
+                                };
+                                if (chType == 2)
+                                    voiceChannels.Add(item);
+                                else
+                                    textChannels.Add(item);
                             }
-                            _projectChannels[project.name] = channelsList;
+                            _projectChannels[project.name] = textChannels;
+
+                            foreach (var vc in voiceChannels)
+                                vc.VoiceGroupKey = $"{project.DbId}_{vc.Name}";
+                            _projectVoiceChannels[project.name] = voiceChannels;
                         }
                     }
 
@@ -564,24 +615,8 @@ namespace DevTavern.Client
                     }
                 }
 
-                // Voice channels — pre-generate "General" on first load
                 if (!_projectVoiceChannels.ContainsKey(selected.name))
-                {
-                    _projectVoiceChannels[selected.name] = new ObservableCollection<ChannelItem>
-                    {
-                        new ChannelItem { Id = _nextVoiceChannelId--, Name = "General", VoiceGroupKey = $"{selected.DbId}_General" }
-                    };
-                }
-                else
-                {
-                    // Actualizeaza cheia daca DbId s-a schimbat (ex: prima selectie era cu DbId=0)
-                    foreach (var ch in _projectVoiceChannels[selected.name])
-                    {
-                        var expectedKey = $"{selected.DbId}_{ch.Name}";
-                        if (ch.VoiceGroupKey != expectedKey)
-                            ch.VoiceGroupKey = expectedKey;
-                    }
-                }
+                    _projectVoiceChannels[selected.name] = new ObservableCollection<ChannelItem>();
                 VoiceChannelsSectionHeader.Visibility = Visibility.Visible;
                 VoiceChannelList.Visibility = Visibility.Visible;
                 VoiceChannelList.ItemsSource = _projectVoiceChannels[selected.name];
@@ -753,8 +788,8 @@ namespace DevTavern.Client
                 ProfileAvatar.Visibility = Visibility.Collapsed;
             }
 
-            ProfileFullName.Text = username;
-            ProfileUsername.Text = _fullNameCache.TryGetValue(username, out var cached) ? cached : "";
+            ProfileFullName.Text = _fullNameCache.TryGetValue(username, out var cached) ? cached : username;
+            ProfileUsername.Text = $"@{username}";
             ProfileRoles.Text = member?.HasDevRoles == true ? member.RoleBadges : (member?.Role ?? "Member");
 
             ProfileCommonProjects.ItemsSource = _projects
@@ -790,8 +825,8 @@ namespace DevTavern.Client
                         var name = json["name"]?.ToString();
                         var fullName = !string.IsNullOrEmpty(name) ? name : username;
                         _fullNameCache[username] = fullName;
-                        if (MiniProfilePanel.Visibility == Visibility.Visible && ProfileFullName.Text == username)
-                            ProfileUsername.Text = fullName;
+                        if (MiniProfilePanel.Visibility == Visibility.Visible && ProfileUsername.Text == $"@{username}")
+                            ProfileFullName.Text = fullName;
                     }
                 }
                 catch { }
@@ -915,8 +950,10 @@ namespace DevTavern.Client
                             msgAvatarUrl = m["user"]?["avatarUrl"]?.ToString() ?? "";
                         }
 
+                        bool msgIsDeleted = m["isDeleted"]?.ToObject<bool>() ?? false;
                         Messages.Add(ParseMessageContent(new ChatMessage
                         {
+                            MessageId = m["id"]?.ToObject<int>() ?? 0,
                             Username = msgUsername,
                             Initials = msgUsername.Length >= 2 ? msgUsername.Substring(0, 2).ToUpper() : msgUsername.ToUpper(),
                             AvatarColor = msgUserId == _currentUserId ? "#238636" : "#8B949E",
@@ -926,7 +963,10 @@ namespace DevTavern.Client
                             Timestamp = time,
                             IsSystemMessage = false,
                             IsMentioningMe = content.Contains("@" + _username, StringComparison.OrdinalIgnoreCase),
-                            MessageDate = msgLocalTime
+                            MessageDate = msgLocalTime,
+                            IsOwnMessage = msgUserId == _currentUserId && !msgIsDeleted,
+                            IsEdited = m["isEdited"]?.ToObject<bool>() ?? false,
+                            IsDeleted = msgIsDeleted
                         }));
                     }
                 }
@@ -1484,13 +1524,41 @@ namespace DevTavern.Client
         private void AddVoiceChannelOverlay_MouseDown(object sender, MouseButtonEventArgs e)
             => AddVoiceChannelOverlay.Visibility = Visibility.Collapsed;
 
-        private void ConfirmAddVoiceChannel_Click(object sender, RoutedEventArgs e)
+        private async void ConfirmAddVoiceChannel_Click(object sender, RoutedEventArgs e)
         {
             var name = NewVoiceChannelNameInput.Text.Trim();
             if (string.IsNullOrEmpty(name) || _selectedProject == null) return;
             if (!_projectVoiceChannels.TryGetValue(_selectedProject, out var voiceChannels)) return;
 
-            voiceChannels.Add(new ChannelItem { Id = _nextVoiceChannelId--, Name = name });
+            var proj = _projects.FirstOrDefault(p => p.name == _selectedProject);
+            if (proj == null || proj.DbId == 0) return;
+
+            if (voiceChannels.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show("A voice channel with this name already exists.", "DevTavern",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            try
+            {
+                var postData = new { Name = name, Type = 2 };
+                var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
+                var resp = await _apiClient.PostAsync($"channels/project/{proj.DbId}", content);
+                if (resp.IsSuccessStatusCode)
+                {
+                    var cJson = JObject.Parse(await resp.Content.ReadAsStringAsync());
+                    voiceChannels.Add(new ChannelItem
+                    {
+                        Id = cJson["id"]?.ToObject<int>() ?? 0,
+                        Name = name,
+                        Type = 2,
+                        VoiceGroupKey = $"{proj.DbId}_{name}"
+                    });
+                }
+            }
+            catch { }
+
             AddVoiceChannelOverlay.Visibility = Visibility.Collapsed;
         }
 
@@ -1736,7 +1804,7 @@ namespace DevTavern.Client
             if (lastReal == null || lastReal.MessageDate.Date != sendTime.Date)
                 Messages.Add(new ChatMessage { IsDateSeparator = true, DateLabel = FormatDateLabel(sendTime.Date) });
 
-            Messages.Add(ParseMessageContent(new ChatMessage
+            var msg = ParseMessageContent(new ChatMessage
             {
                 Username = _username,
                 Initials = _username.Length >= 2 ? _username.Substring(0, 2).ToUpper() : _username.ToUpper(),
@@ -1747,8 +1815,10 @@ namespace DevTavern.Client
                 Timestamp = sendTime.ToString("HH:mm"),
                 IsSystemMessage = false,
                 IsMentioningMe = text.Contains("@" + _username, StringComparison.OrdinalIgnoreCase),
-                MessageDate = sendTime
-            }));
+                MessageDate = sendTime,
+                IsOwnMessage = true
+            });
+            Messages.Add(msg);
 
             await Application.Current.Dispatcher.InvokeAsync(() => MessagesScrollViewer.ScrollToEnd(),
                 System.Windows.Threading.DispatcherPriority.Background);
@@ -1761,7 +1831,12 @@ namespace DevTavern.Client
                 // Salvare in DB
                 var postData = new { Content = text, UserId = _currentUserId, ChannelId = _selectedChannelId };
                 var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
-                await _apiClient.PostAsync("messages", content);
+                var sendResp = await _apiClient.PostAsync("messages", content);
+                if (sendResp.IsSuccessStatusCode)
+                {
+                    var respJson = JObject.Parse(await sendResp.Content.ReadAsStringAsync());
+                    msg.MessageId = respJson["id"]?.ToObject<int>() ?? 0;
+                }
 
                 // Trimitere live catre grupul canalului curent (SignalR)
                 if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
@@ -1786,6 +1861,19 @@ namespace DevTavern.Client
                     _editingChannel = channel;
                     SettingsChannelTitle.Text = channel.Name;
                     EditChannelNameInput.Text = channel.Name;
+
+                    if (channel.Type == 2)
+                    {
+                        SettingsChannelPrefix.Text = "🔊";
+                        SettingsChannelSubtitle.Text = "Voice Channel Settings";
+                        SettingsDangerZoneSubtitle.Text = "Permanently delete this voice channel";
+                    }
+                    else
+                    {
+                        SettingsChannelPrefix.Text = "#";
+                        SettingsChannelSubtitle.Text = "Channel Settings";
+                        SettingsDangerZoneSubtitle.Text = "Permanently delete this channel and all its messages";
+                    }
 
                     // Reset to Overview tab
                     OverviewTabContent.Visibility = Visibility.Visible;
@@ -1848,43 +1936,62 @@ namespace DevTavern.Client
                 return;
             }
 
-            // Check if name already exists in project
-            if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var channels))
+            if (_editingChannel.Type == 2)
             {
-                if (channels.Any(c => c.Name == newName && c.Id != _editingChannel.Id))
+                if (_selectedProject != null && _projectVoiceChannels.TryGetValue(_selectedProject, out var vCh))
                 {
-                    MessageBox.Show("A channel with this name already exists.", "DevTavern",
-                        MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
+                    if (vCh.Any(c => c.Name == newName && c.Id != _editingChannel.Id))
+                    {
+                        MessageBox.Show("A voice channel with this name already exists.", "DevTavern",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+                _editingChannel.Name = newName;
+                if (_selectedProject != null && _projectVoiceChannels.TryGetValue(_selectedProject, out var vChannels))
+                {
+                    VoiceChannelList.ItemsSource = null;
+                    VoiceChannelList.ItemsSource = vChannels;
+                }
+                if (_currentVoiceChannel?.Id == _editingChannel.Id)
+                    VoiceConnectedChannelName.Text = $"#{newName}";
+            }
+            else
+            {
+                if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var channels))
+                {
+                    if (channels.Any(c => c.Name == newName && c.Id != _editingChannel.Id))
+                    {
+                        MessageBox.Show("A channel with this name already exists.", "DevTavern",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                }
+                _editingChannel.Name = newName;
+                if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var ch))
+                {
+                    ChannelList.ItemsSource = null;
+                    ChannelList.ItemsSource = ch;
+                }
+                if (_selectedChannelId == _editingChannel.Id)
+                {
+                    ChatTitle.Text = newName;
+                    ChatSubtitle.Text = $"{_selectedProject} · #{newName}";
                 }
             }
 
-            // Update local state
-            _editingChannel.Name = newName;
-
-            // Refresh the channel list UI
-            if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var ch))
-            {
-                ChannelList.ItemsSource = null;
-                ChannelList.ItemsSource = ch;
-            }
-
-            // Update chat header if this is the currently selected channel
-            if (_selectedChannelId == _editingChannel.Id)
-            {
-                ChatTitle.Text = newName;
-                ChatSubtitle.Text = $"{_selectedProject} · #{newName}";
-            }
-
             SettingsChannelTitle.Text = newName;
+            ChannelSettingsOverlay.Visibility = Visibility.Collapsed;
         }
 
-        // Sterge canalul (doar local) — arata dialog custom de confirmare
+        // Sterge canalul — arata dialog custom de confirmare
         private void DeleteChannel_Click(object sender, RoutedEventArgs e)
         {
             if (_editingChannel == null || _selectedProject == null) return;
 
-            DeleteConfirmMessage.Text = $"Are you sure you want to delete #{_editingChannel.Name}?\nThis action cannot be undone and all messages will be lost.";
+            DeleteConfirmMessage.Text = _editingChannel.Type == 2
+                ? $"Are you sure you want to delete voice channel \"{_editingChannel.Name}\"?\nThis action cannot be undone."
+                : $"Are you sure you want to delete #{_editingChannel.Name}?\nThis action cannot be undone and all messages will be lost.";
             DeleteConfirmOverlay.Visibility = Visibility.Visible;
         }
 
@@ -1914,30 +2021,32 @@ namespace DevTavern.Client
                 {
                     int deletedId = _editingChannel.Id;
 
-                    // Remove from local collection
-                    if (_projectChannels.TryGetValue(_selectedProject, out var channels))
+                    if (_editingChannel.Type == 2)
                     {
-                        channels.Remove(_editingChannel);
-
-                        if (_selectedChannelId == deletedId)
+                        if (_projectVoiceChannels.TryGetValue(_selectedProject, out var vChannels))
+                            vChannels.Remove(_editingChannel);
+                        if (_currentVoiceChannel?.Id == deletedId)
+                            LeaveCurrentVoiceChannel();
+                    }
+                    else
+                    {
+                        if (_projectChannels.TryGetValue(_selectedProject, out var channels))
                         {
-                            if (channels.Count > 0)
+                            channels.Remove(_editingChannel);
+                            if (_selectedChannelId == deletedId)
                             {
-                                ChannelList.SelectedIndex = 0;
-                            }
-                            else
-                            {
-                                Messages.Clear();
-                                ChatTitle.Text = "No channels";
-                                ChatSubtitle.Text = "Create a channel to start chatting";
+                                if (channels.Count > 0)
+                                    ChannelList.SelectedIndex = 0;
+                                else
+                                {
+                                    Messages.Clear();
+                                    ChatTitle.Text = "No channels";
+                                    ChatSubtitle.Text = "Create a channel to start chatting";
+                                }
                             }
                         }
-                    }
-
-                    // Notificare SignalR pentru restul echipei
-                    if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
-                    {
-                        await _hubConnection.InvokeAsync("NotifyChannelDeleted", proj.DbId.ToString(), deletedId);
+                        if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                            await _hubConnection.InvokeAsync("NotifyChannelDeleted", proj.DbId.ToString(), deletedId);
                     }
                 }
             }
@@ -1945,6 +2054,84 @@ namespace DevTavern.Client
 
             ChannelSettingsOverlay.Visibility = Visibility.Collapsed;
             _editingChannel = null;
+        }
+
+        // ========== Message Edit / Delete ==========
+
+        private void EditMessage_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as MenuItem)?.Tag is not ChatMessage msg || !msg.IsOwnMessage || msg.IsDeleted) return;
+            msg.EditContent = msg.Content;
+            msg.IsEditing = true;
+        }
+
+        private void CancelEdit_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as Button)?.Tag is ChatMessage msg)
+                msg.IsEditing = false;
+        }
+
+        private async void SaveEdit_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as Button)?.Tag is not ChatMessage msg) return;
+            await DoSaveEditAsync(msg);
+        }
+
+        private async void EditBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (sender is not TextBox tb || tb.Tag is not ChatMessage msg) return;
+            if (e.Key == Key.Enter && !Keyboard.IsKeyDown(Key.LeftShift) && !Keyboard.IsKeyDown(Key.RightShift))
+            {
+                await DoSaveEditAsync(msg);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                msg.IsEditing = false;
+                e.Handled = true;
+            }
+        }
+
+        private async Task DoSaveEditAsync(ChatMessage msg)
+        {
+            var newContent = msg.EditContent?.Trim();
+            if (string.IsNullOrWhiteSpace(newContent)) { msg.IsEditing = false; return; }
+            if (newContent == msg.Content) { msg.IsEditing = false; return; }
+
+            if (msg.MessageId > 0)
+            {
+                try
+                {
+                    var body = new StringContent(
+                        JsonConvert.SerializeObject(new { Content = newContent }),
+                        System.Text.Encoding.UTF8, "application/json");
+                    var resp = await _apiClient.PutAsync($"messages/{msg.MessageId}", body);
+                    if (!resp.IsSuccessStatusCode) { msg.IsEditing = false; return; }
+
+                    if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                        await _hubConnection.InvokeAsync("EditMessageBroadcast", _selectedChannelId.ToString(), msg.MessageId, newContent);
+                }
+                catch { msg.IsEditing = false; return; }
+            }
+
+            msg.Content = newContent;
+            msg.IsEdited = true;
+            ParseMessageContent(msg);
+            msg.IsEditing = false;
+        }
+
+        private async void DeleteMessage_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as MenuItem)?.Tag is not ChatMessage msg || !msg.IsOwnMessage) return;
+            if (msg.MessageId == 0) { Messages.Remove(msg); return; }
+            try
+            {
+                var resp = await _apiClient.DeleteAsync($"messages/{msg.MessageId}");
+                if (!resp.IsSuccessStatusCode) return;
+                if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
+                    await _hubConnection.InvokeAsync("DeleteMessageBroadcast", _selectedChannelId.ToString(), msg.MessageId);
+            }
+            catch { }
         }
 
         // ========== Logout ==========
@@ -2750,24 +2937,63 @@ namespace DevTavern.Client
             base.OnClosed(e);
         }
     }
-    public class ChatMessage
+    public class ChatMessage : INotifyPropertyChanged
     {
         public string Username { get; set; } = "";
         public string Initials { get; set; } = "";
         public string AvatarColor { get; set; } = "#8B949E";
         public string UsernameColor { get; set; } = "#E6EDF3";
         public string? AvatarUrl { get; set; } = null;
-        public string Content { get; set; } = "";
         public string Timestamp { get; set; } = "";
         public bool IsSystemMessage { get; set; } = false;
         public bool HasAvatar => !string.IsNullOrEmpty(AvatarUrl);
         public bool IsMentioningMe { get; set; } = false;
+        public bool IsOwnMessage { get; set; } = false;
+        public int MessageId { get; set; } = 0;
+
+        private string _content = "";
+        public string Content
+        {
+            get => _content;
+            set { _content = value; OnPropertyChanged(); }
+        }
+
+        private string _displayContent = "";
+        public string DisplayContent
+        {
+            get => _displayContent;
+            set { _displayContent = value; OnPropertyChanged(); }
+        }
+
+        private bool _isEdited;
+        public bool IsEdited
+        {
+            get => _isEdited;
+            set { _isEdited = value; OnPropertyChanged(); }
+        }
+
+        private bool _isDeleted;
+        public bool IsDeleted
+        {
+            get => _isDeleted;
+            set { _isDeleted = value; OnPropertyChanged(); OnPropertyChanged(nameof(ContentColor)); }
+        }
+
+        private bool _isEditing;
+        public bool IsEditing
+        {
+            get => _isEditing;
+            set { _isEditing = value; OnPropertyChanged(); }
+        }
+
+        public string EditContent { get; set; } = "";
+
+        public string ContentColor => IsDeleted ? "#6E7681" : "#E6EDF3";
 
         public bool HasCodeReference { get; set; } = false;
         public string CodeFilePath { get; set; } = "";
         public string CodeBranch { get; set; } = "";
         public string CodeSelectedText { get; set; } = "";
-        public string DisplayContent { get; set; } = "";
         public string CodeFileExtension => string.IsNullOrEmpty(CodeFilePath)
             ? ""
             : System.IO.Path.GetExtension(CodeFilePath);
@@ -2775,12 +3001,17 @@ namespace DevTavern.Client
         public bool IsDateSeparator { get; set; } = false;
         public string DateLabel { get; set; } = "";
         public DateTime MessageDate { get; set; } = DateTime.MinValue;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? propName = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
     }
 
     public class ChannelItem : INotifyPropertyChanged
     {
         public int Id { get; set; }
         public string Name { get; set; } = "";
+        public int Type { get; set; } = 0;
         public string VoiceGroupKey { get; set; } = "";
 
         private int _unreadMentionCount;
@@ -2900,47 +3131,49 @@ namespace DevTavern.Client
     public static class TextBlockHelper
     {
         public static readonly DependencyProperty FormattedTextProperty =
-            DependencyProperty.RegisterAttached("FormattedText", typeof(string), typeof(TextBlockHelper), new PropertyMetadata(string.Empty, OnFormattedTextChanged));
+            DependencyProperty.RegisterAttached("FormattedText", typeof(string), typeof(TextBlockHelper),
+                new PropertyMetadata(string.Empty, (d, e) => RebuildInlines(d as TextBlock)));
 
-        public static void SetFormattedText(DependencyObject obj, string value)
-        {
-            obj.SetValue(FormattedTextProperty, value);
-        }
+        public static readonly DependencyProperty FormattedTextIsEditedProperty =
+            DependencyProperty.RegisterAttached("FormattedTextIsEdited", typeof(bool), typeof(TextBlockHelper),
+                new PropertyMetadata(false, (d, e) => RebuildInlines(d as TextBlock)));
 
-        public static string GetFormattedText(DependencyObject obj)
-        {
-            return (string)obj.GetValue(FormattedTextProperty);
-        }
+        public static void SetFormattedText(DependencyObject obj, string value) => obj.SetValue(FormattedTextProperty, value);
+        public static string GetFormattedText(DependencyObject obj) => (string)obj.GetValue(FormattedTextProperty);
+        public static void SetFormattedTextIsEdited(DependencyObject obj, bool value) => obj.SetValue(FormattedTextIsEditedProperty, value);
+        public static bool GetFormattedTextIsEdited(DependencyObject obj) => (bool)obj.GetValue(FormattedTextIsEditedProperty);
 
-        private static void OnFormattedTextChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        private static void RebuildInlines(TextBlock? textBlock)
         {
-            if (d is TextBlock textBlock)
+            if (textBlock == null) return;
+            var text = (string)textBlock.GetValue(FormattedTextProperty) ?? string.Empty;
+            var isEdited = (bool)textBlock.GetValue(FormattedTextIsEditedProperty);
+            textBlock.Inlines.Clear();
+
+            if (!string.IsNullOrEmpty(text))
             {
-                var text = e.NewValue as string ?? string.Empty;
-                textBlock.Inlines.Clear();
-
-                if (string.IsNullOrEmpty(text)) return;
-
                 var parts = System.Text.RegularExpressions.Regex.Split(text, @"(@[a-zA-Z0-9_\-]+)");
                 foreach (var part in parts)
                 {
                     if (string.IsNullOrEmpty(part)) continue;
-
                     if (part.StartsWith("@") && part.Length > 1)
-                    {
-                        var run = new System.Windows.Documents.Run(part)
+                        textBlock.Inlines.Add(new System.Windows.Documents.Run(part)
                         {
                             Foreground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#E3B341")),
                             FontWeight = FontWeights.Bold
-                        };
-                        textBlock.Inlines.Add(run);
-                    }
+                        });
                     else
-                    {
                         textBlock.Inlines.Add(new System.Windows.Documents.Run(part));
-                    }
                 }
             }
+
+            if (isEdited)
+                textBlock.Inlines.Add(new System.Windows.Documents.Run(" (edited)")
+                {
+                    Foreground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#6E7681")),
+                    FontStyle = FontStyles.Italic,
+                    FontSize = 11
+                });
         }
     }
 

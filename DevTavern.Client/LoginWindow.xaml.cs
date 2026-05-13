@@ -89,7 +89,7 @@ namespace DevTavern.Client
 
                     // Perform skip
                     StatusText.Text = "Loading workspace...";
-                    var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId);
+                    var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId, displayName);
                     await mainWindow.InitializeAsync();
                     mainWindow.Show();
                     this.Close();
@@ -120,8 +120,63 @@ namespace DevTavern.Client
                 LoginButton.IsEnabled = false;
 
                 _accessToken = await _githubAuth.LoginAndGetTokenAsync();
-                StatusText.Text = "Authenticated! ✓ Loading projects...";
+                StatusText.Text = "Authenticated! ✓ Checking account...";
 
+                // Fetch user info
+                string username = "user";
+                string avatarUrl = "";
+                string githubId = "";
+                string displayName = "";
+                int currentUserId = 0;
+
+                using var client = new HttpClient();
+                client.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+                var userResponse = await client.GetStringAsync("https://api.github.com/user");
+                var userJson = JObject.Parse(userResponse);
+                username = userJson["login"]?.ToString() ?? "user";
+                displayName = userJson["name"]?.ToString() ?? username;
+                avatarUrl = userJson["avatar_url"]?.ToString() ?? "";
+                githubId = userJson["id"]?.ToString() ?? username;
+
+                var usersResp = await _apiClient.GetStringAsync("users");
+                var usersArr = JArray.Parse(usersResp);
+                var existingUser = usersArr.FirstOrDefault(u => u["gitHubId"]?.ToString() == githubId);
+
+                if (existingUser != null)
+                {
+                    currentUserId = existingUser["id"]?.ToObject<int>() ?? 0;
+                    var putData = new { Id = currentUserId, GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
+                    var putContent = new StringContent(JsonConvert.SerializeObject(putData), System.Text.Encoding.UTF8, "application/json");
+                    await _apiClient.PutAsync($"users/{currentUserId}", putContent);
+                }
+                else
+                {
+                    var postData = new { GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
+                    var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
+                    var createResp = await _apiClient.PostAsync("users", content);
+                    if (createResp.IsSuccessStatusCode)
+                    {
+                        var newUserJson = JObject.Parse(await createResp.Content.ReadAsStringAsync());
+                        currentUserId = newUserJson["id"]?.ToObject<int>() ?? 0;
+                    }
+                }
+
+                // Skip project import if user is registered and cache exists
+                var projectsPath = "installed_projects.cache";
+                if (currentUserId > 0 && File.Exists(projectsPath))
+                {
+                    var cachedProjectsJson = await File.ReadAllTextAsync(projectsPath);
+                    var selectedRepos = JsonConvert.DeserializeObject<List<RepoItem>>(cachedProjectsJson) ?? new List<RepoItem>();
+                    StatusText.Text = "Loading workspace...";
+                    var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId, displayName);
+                    await mainWindow.InitializeAsync();
+                    mainWindow.Show();
+                    this.Close();
+                    return;
+                }
+
+                StatusText.Text = "Authenticated! ✓ Loading projects...";
                 await FetchReposAutomated();
             }
             catch (Exception ex)
@@ -235,7 +290,7 @@ namespace DevTavern.Client
             catch { }
 
             StatusText.Text = "Loading workspace...";
-            var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId);
+            var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId, displayName);
             await mainWindow.InitializeAsync();
             mainWindow.Show();
             this.Close();
