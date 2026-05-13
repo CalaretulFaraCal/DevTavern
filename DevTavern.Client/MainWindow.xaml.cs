@@ -56,6 +56,19 @@ namespace DevTavern.Client
         private double _vadThresholdRms = 0;
         private static readonly string _voiceSettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevTavern", "voice_settings.json");
+        private static readonly string _soundSettingsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevTavern", "sound_settings.json");
+        private AppSoundSettings _soundSettings = new();
+
+        public static readonly string[] KeybindActions = { "Push to Mute", "Push to Deafen", "Toggle Mute", "Toggle Deafen" };
+        public ObservableCollection<KeybindEntry> Keybinds { get; } = new();
+        private static readonly string _keybindsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevTavern", "keybinds.json");
+        private KeybindEntry? _capturingKeybindEntry = null;
+        private string _capturingKeybindPrevKey = "";
+        private bool _pushMuteActive = false;
+        private bool _pushDeafenActive = false;
+
         private readonly Dictionary<string, CancellationTokenSource> _speakingTimers = new();
 
         // NAudio Voice Chat properties
@@ -75,23 +88,28 @@ namespace DevTavern.Client
 
         public ObservableCollection<ChatMessage> Messages { get; set; } = new ObservableCollection<ChatMessage>();
 
-        private void PlaySound(string fileName)
+        private void PlaySound(string fileName, SoundConfig? config = null)
         {
+            if (config != null && !config.Enabled) return;
             try
             {
                 string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", fileName);
-                if (File.Exists(path))
-                {
-                    new System.Media.SoundPlayer(path).Play();
-                }
+                if (!File.Exists(path)) return;
+                float volume = config != null ? (float)(config.Volume / 100.0) : 1.0f;
+                var reader = new AudioFileReader(path) { Volume = volume };
+                var wo = new WaveOutEvent();
+                wo.Init(reader);
+                wo.Play();
+                wo.PlaybackStopped += (s, e) => { wo.Dispose(); reader.Dispose(); };
             }
-            catch { /* Ignore missing sounds */ }
+            catch { }
         }
 
         public MainWindow(string accessToken, List<RepoItem> projects, string username, string avatarUrl, int currentUserId, string displayName = "")
         {
             InitializeComponent();
-            PlaySound("sunet_deschidere.wav");
+            _soundSettings = LoadSoundSettings();
+            PlaySound("sunet_deschidere.wav", _soundSettings.Startup);
 
             _currentUserId = currentUserId;
             _apiClient = new HttpClient { BaseAddress = new Uri("https://devtavern.onrender.com/api/") };
@@ -159,9 +177,9 @@ namespace DevTavern.Client
                     if (senderUsername == _username) return;
 
                     if (messageContent.Contains("@" + _username, StringComparison.OrdinalIgnoreCase))
-                        PlaySound("mention.wav");
+                        PlaySound("mention.wav", _soundSettings.Mention);
                     else
-                        PlaySound("mesaje.wav");
+                        PlaySound("mesaje.wav", _soundSettings.Message);
 
                     DateTime now = DateTime.Now;
                     var lastReal = Messages.LastOrDefault(m => !m.IsDateSeparator && !m.IsSystemMessage);
@@ -274,10 +292,14 @@ namespace DevTavern.Client
                 {
                     var msg = Messages.FirstOrDefault(m => m.MessageId == messageId);
                     if (msg == null) return;
-                    msg.Content = "[Acest mesaj a fost sters]";
-                    msg.DisplayContent = "[Acest mesaj a fost sters]";
-                    msg.IsOwnMessage = false;
-                    msg.IsDeleted = true;
+                    int idx = Messages.IndexOf(msg);
+                    Messages.RemoveAt(idx);
+                    // Sterge separatorul de data daca a ramas fara mesaje dupa el
+                    if (idx > 0 && Messages[idx - 1].IsDateSeparator)
+                    {
+                        bool orphaned = idx >= Messages.Count || Messages[idx].IsDateSeparator;
+                        if (orphaned) Messages.RemoveAt(idx - 1);
+                    }
                 });
             });
 
@@ -554,6 +576,9 @@ namespace DevTavern.Client
 
             PopulateAudioDevices();
             LoadVoiceSettings();
+            LoadSoundSettingsToUI();
+            KeybindsList.ItemsSource = Keybinds;
+            foreach (var kb in LoadKeybindList()) Keybinds.Add(kb);
             _inputVolumeScale = InputVolumeSlider.Value / 100.0;
             _outputVolumeScale = OutputVolumeSlider.Value / 100.0;
             _vadThresholdRms = 32767.0 * Math.Pow(10.0, SensitivitySlider.Value / 20.0);
@@ -926,45 +951,39 @@ namespace DevTavern.Client
                         catch { }
                         string time = msgLocalTime.ToString("HH:mm");
 
+                        bool msgIsDeleted = m["isDeleted"]?.ToObject<bool>() ?? false;
+                        if (msgIsDeleted) continue;
+
+                        int msgUserId = m["userId"]?.ToObject<int>() ?? 0;
+                        string msgUsernameFromApi = m["user"]?["username"]?.ToString() ?? "";
+                        string msgAvatarFromApi = m["user"]?["avatarUrl"]?.ToString() ?? "";
+
+                        bool isOwn = (msgUserId != 0 && msgUserId == _currentUserId)
+                                  || string.Equals(msgUsernameFromApi, _username, StringComparison.OrdinalIgnoreCase);
+
+                        string msgUsername = isOwn ? _username
+                            : (!string.IsNullOrEmpty(msgUsernameFromApi) ? msgUsernameFromApi : $"User#{msgUserId}");
+                        string msgAvatarUrl = isOwn ? _avatarUrl : msgAvatarFromApi;
+
                         if (!prevMsgDate.HasValue || msgLocalTime.Date != prevMsgDate.Value)
                         {
                             Messages.Add(new ChatMessage { IsDateSeparator = true, DateLabel = FormatDateLabel(msgLocalTime.Date) });
                             prevMsgDate = msgLocalTime.Date;
                         }
-
-                        // Serverul nu include navigation properties (User) => user va fi null
-                        // Verificam daca userId corespunde utilizatorului curent
-                        int msgUserId = m["userId"]?.ToObject<int>() ?? 0;
-                        string msgUsername;
-                        string msgAvatarUrl;
-
-                        if (msgUserId == _currentUserId)
-                        {
-                            msgUsername = _username;
-                            msgAvatarUrl = _avatarUrl;
-                        }
-                        else
-                        {
-                            // Incercam sa citim user-ul din raspuns (poate serverul il include)
-                            msgUsername = m["user"]?["username"]?.ToString() ?? $"User#{msgUserId}";
-                            msgAvatarUrl = m["user"]?["avatarUrl"]?.ToString() ?? "";
-                        }
-
-                        bool msgIsDeleted = m["isDeleted"]?.ToObject<bool>() ?? false;
                         Messages.Add(ParseMessageContent(new ChatMessage
                         {
                             MessageId = m["id"]?.ToObject<int>() ?? 0,
                             Username = msgUsername,
                             Initials = msgUsername.Length >= 2 ? msgUsername.Substring(0, 2).ToUpper() : msgUsername.ToUpper(),
-                            AvatarColor = msgUserId == _currentUserId ? "#238636" : "#8B949E",
-                            UsernameColor = msgUserId == _currentUserId ? "#238636" : "#E6EDF3",
+                            AvatarColor = isOwn ? "#238636" : "#8B949E",
+                            UsernameColor = isOwn ? "#238636" : "#E6EDF3",
                             AvatarUrl = string.IsNullOrEmpty(msgAvatarUrl) ? null : msgAvatarUrl,
                             Content = content,
                             Timestamp = time,
                             IsSystemMessage = false,
                             IsMentioningMe = content.Contains("@" + _username, StringComparison.OrdinalIgnoreCase),
                             MessageDate = msgLocalTime,
-                            IsOwnMessage = msgUserId == _currentUserId && !msgIsDeleted,
+                            IsOwnMessage = isOwn && !msgIsDeleted,
                             IsEdited = m["isEdited"]?.ToObject<bool>() ?? false,
                             IsDeleted = msgIsDeleted
                         }));
@@ -1055,7 +1074,7 @@ namespace DevTavern.Client
             VoiceConnectedBar.Visibility = Visibility.Visible;
 
             // Redam sunetul INSTANT, inainte de delay-ul de la net
-            PlaySound("intrare_voice.wav");
+            PlaySound("intrare_voice.wav", _soundSettings.JoinVoice);
 
             if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
             {
@@ -1184,7 +1203,7 @@ namespace DevTavern.Client
                 _currentVoiceGroupKey = null;
 
                 // Redam sunetul INSTANT
-                PlaySound("iesire_voice.wav");
+                PlaySound("iesire_voice.wav", _soundSettings.LeaveVoice);
 
                 if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected && leavingKey != null)
                 {
@@ -1226,30 +1245,29 @@ namespace DevTavern.Client
             DeafenIcon.Fill = new SolidColorBrush(Color.FromRgb(0x8B, 0x94, 0x9E));
         }
 
-        private async void MuteVoice_Click(object sender, RoutedEventArgs e)
+        private async void MuteVoice_Click(object sender, RoutedEventArgs e) => await ExecuteToggleMuteAsync();
+        private async void DeafenVoice_Click(object sender, RoutedEventArgs e) => await ExecuteToggleDeafenAsync();
+
+        private async Task ExecuteToggleMuteAsync()
         {
             _isMuted = !_isMuted;
-            if (_isMuted) PlaySound("zavor_inchis.wav");
-            else PlaySound("zavor_deschis.wav");
-
+            if (_isMuted) PlaySound("zavor_inchis.wav", _soundSettings.Mute);
+            else PlaySound("zavor_deschis.wav", _soundSettings.Unmute);
             MuteIcon.Fill = new SolidColorBrush(_isMuted
-                ? Color.FromRgb(0xDA, 0x36, 0x33)
-                : Color.FromRgb(0x8B, 0x94, 0x9E));
+                ? Color.FromRgb(0xDA, 0x36, 0x33) : Color.FromRgb(0x8B, 0x94, 0x9E));
             var me = _currentVoiceChannel?.VoiceMembers.FirstOrDefault(m => m.Username == _username);
             if (me != null) me.IsMuted = _isMuted;
             if (_currentVoiceGroupKey != null && _hubConnection?.State == HubConnectionState.Connected)
                 try { await _hubConnection.InvokeAsync("BroadcastVoiceState", _currentVoiceGroupKey, _username, _isMuted, _isDeafened); } catch { }
         }
 
-        private async void DeafenVoice_Click(object sender, RoutedEventArgs e)
+        private async Task ExecuteToggleDeafenAsync()
         {
             _isDeafened = !_isDeafened;
-            if (_isDeafened) PlaySound("zavor_inchis.wav");
-            else PlaySound("zavor_deschis.wav");
-
+            if (_isDeafened) PlaySound("zavor_inchis.wav", _soundSettings.Deafen);
+            else PlaySound("zavor_deschis.wav", _soundSettings.Undeafen);
             DeafenIcon.Fill = new SolidColorBrush(_isDeafened
-                ? Color.FromRgb(0xDA, 0x36, 0x33)
-                : Color.FromRgb(0x8B, 0x94, 0x9E));
+                ? Color.FromRgb(0xDA, 0x36, 0x33) : Color.FromRgb(0x8B, 0x94, 0x9E));
             var me = _currentVoiceChannel?.VoiceMembers.FirstOrDefault(m => m.Username == _username);
             if (me != null) me.IsDeafened = _isDeafened;
             if (_currentVoiceGroupKey != null && _hubConnection?.State == HubConnectionState.Connected)
@@ -1377,17 +1395,236 @@ namespace DevTavern.Client
             public string OutputDevice { get; set; } = "";
         }
 
+        private class SoundConfig
+        {
+            public bool Enabled { get; set; } = true;
+            public double Volume { get; set; } = 50;
+        }
+
+        private class AppSoundSettings
+        {
+            public SoundConfig Startup { get; set; } = new();
+            public SoundConfig JoinVoice { get; set; } = new();
+            public SoundConfig LeaveVoice { get; set; } = new();
+            public SoundConfig Mute { get; set; } = new();
+            public SoundConfig Unmute { get; set; } = new();
+            public SoundConfig Deafen { get; set; } = new();
+            public SoundConfig Undeafen { get; set; } = new();
+            public SoundConfig Message { get; set; } = new();
+            public SoundConfig Mention { get; set; } = new();
+        }
+
+        private static AppSoundSettings LoadSoundSettings()
+        {
+            try
+            {
+                if (File.Exists(_soundSettingsPath))
+                {
+                    var loaded = JsonConvert.DeserializeObject<AppSoundSettings>(File.ReadAllText(_soundSettingsPath));
+                    if (loaded != null) return loaded;
+                }
+            }
+            catch { }
+            return new AppSoundSettings();
+        }
+
+        private void SaveSoundSettings()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_soundSettingsPath)!);
+                File.WriteAllText(_soundSettingsPath, JsonConvert.SerializeObject(_soundSettings, Formatting.Indented));
+            }
+            catch { }
+        }
+
+        private void LoadSoundSettingsToUI()
+        {
+            SoundStartupCheck.IsChecked = _soundSettings.Startup.Enabled;
+            SoundStartupSlider.Value = _soundSettings.Startup.Volume;
+            SoundJoinVoiceCheck.IsChecked = _soundSettings.JoinVoice.Enabled;
+            SoundJoinVoiceSlider.Value = _soundSettings.JoinVoice.Volume;
+            SoundLeaveVoiceCheck.IsChecked = _soundSettings.LeaveVoice.Enabled;
+            SoundLeaveVoiceSlider.Value = _soundSettings.LeaveVoice.Volume;
+            SoundMuteCheck.IsChecked = _soundSettings.Mute.Enabled;
+            SoundMuteSlider.Value = _soundSettings.Mute.Volume;
+            SoundUnmuteCheck.IsChecked = _soundSettings.Unmute.Enabled;
+            SoundUnmuteSlider.Value = _soundSettings.Unmute.Volume;
+            SoundDeafenCheck.IsChecked = _soundSettings.Deafen.Enabled;
+            SoundDeafenSlider.Value = _soundSettings.Deafen.Volume;
+            SoundUndeafenCheck.IsChecked = _soundSettings.Undeafen.Enabled;
+            SoundUndeafenSlider.Value = _soundSettings.Undeafen.Volume;
+            SoundMessageCheck.IsChecked = _soundSettings.Message.Enabled;
+            SoundMessageSlider.Value = _soundSettings.Message.Volume;
+            SoundMentionCheck.IsChecked = _soundSettings.Mention.Enabled;
+            SoundMentionSlider.Value = _soundSettings.Mention.Volume;
+        }
+
+        private void SaveSoundSettingsFromUI()
+        {
+            _soundSettings.Startup.Enabled = SoundStartupCheck.IsChecked == true;
+            _soundSettings.Startup.Volume = SoundStartupSlider.Value;
+            _soundSettings.JoinVoice.Enabled = SoundJoinVoiceCheck.IsChecked == true;
+            _soundSettings.JoinVoice.Volume = SoundJoinVoiceSlider.Value;
+            _soundSettings.LeaveVoice.Enabled = SoundLeaveVoiceCheck.IsChecked == true;
+            _soundSettings.LeaveVoice.Volume = SoundLeaveVoiceSlider.Value;
+            _soundSettings.Mute.Enabled = SoundMuteCheck.IsChecked == true;
+            _soundSettings.Mute.Volume = SoundMuteSlider.Value;
+            _soundSettings.Unmute.Enabled = SoundUnmuteCheck.IsChecked == true;
+            _soundSettings.Unmute.Volume = SoundUnmuteSlider.Value;
+            _soundSettings.Deafen.Enabled = SoundDeafenCheck.IsChecked == true;
+            _soundSettings.Deafen.Volume = SoundDeafenSlider.Value;
+            _soundSettings.Undeafen.Enabled = SoundUndeafenCheck.IsChecked == true;
+            _soundSettings.Undeafen.Volume = SoundUndeafenSlider.Value;
+            _soundSettings.Message.Enabled = SoundMessageCheck.IsChecked == true;
+            _soundSettings.Message.Volume = SoundMessageSlider.Value;
+            _soundSettings.Mention.Enabled = SoundMentionCheck.IsChecked == true;
+            _soundSettings.Mention.Volume = SoundMentionSlider.Value;
+        }
+
+        private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T found) return found;
+                var result = FindVisualChild<T>(child);
+                if (result != null) return result;
+            }
+            return null;
+        }
+
+        private void SetTabActive(Button tab, bool active)
+        {
+            var border = FindVisualChild<Border>(tab);
+            var text = FindVisualChild<TextBlock>(tab);
+            var green = new SolidColorBrush(Color.FromRgb(0x23, 0x86, 0x36));
+            var grey = new SolidColorBrush(Color.FromRgb(0x8B, 0x94, 0x9E));
+            if (border != null) border.BorderBrush = active ? green : Brushes.Transparent;
+            if (text != null) text.Foreground = active ? green : grey;
+        }
+
+        private void SettingsTabVoice_Click(object sender, RoutedEventArgs e)
+        {
+            VoiceTabContent.Visibility = Visibility.Visible;
+            AppTabContent.Visibility = Visibility.Collapsed;
+            KeybindsTabContent.Visibility = Visibility.Collapsed;
+            SetTabActive(SettingsTabVoiceBtn, true);
+            SetTabActive(SettingsTabAppBtn, false);
+            SetTabActive(SettingsTabKeybindsBtn, false);
+        }
+
+        private void SettingsTabApp_Click(object sender, RoutedEventArgs e)
+        {
+            VoiceTabContent.Visibility = Visibility.Collapsed;
+            AppTabContent.Visibility = Visibility.Visible;
+            KeybindsTabContent.Visibility = Visibility.Collapsed;
+            SetTabActive(SettingsTabVoiceBtn, false);
+            SetTabActive(SettingsTabAppBtn, true);
+            SetTabActive(SettingsTabKeybindsBtn, false);
+        }
+
+        private void SettingsTabKeybinds_Click(object sender, RoutedEventArgs e)
+        {
+            VoiceTabContent.Visibility = Visibility.Collapsed;
+            AppTabContent.Visibility = Visibility.Collapsed;
+            KeybindsTabContent.Visibility = Visibility.Visible;
+            SetTabActive(SettingsTabVoiceBtn, false);
+            SetTabActive(SettingsTabAppBtn, false);
+            SetTabActive(SettingsTabKeybindsBtn, true);
+        }
+
+        private void CaptureKeybind_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.DataContext is not KeybindEntry entry) return;
+            _capturingKeybindPrevKey = entry.Key;
+            _capturingKeybindEntry = entry;
+            entry.Key = "Press a key...";
+        }
+
+        private void AddKeybind_Click(object sender, RoutedEventArgs e)
+        {
+            Keybinds.Add(new KeybindEntry());
+            SaveKeybinds();
+        }
+
+        private void DeleteKeybind_Click(object sender, RoutedEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.DataContext is not KeybindEntry entry) return;
+            Keybinds.Remove(entry);
+            SaveKeybinds();
+        }
+
+        private List<KeybindEntry> LoadKeybindList()
+        {
+            try
+            {
+                if (File.Exists(_keybindsPath))
+                {
+                    var loaded = JsonConvert.DeserializeObject<List<KeybindEntry>>(File.ReadAllText(_keybindsPath));
+                    if (loaded != null) return loaded;
+                }
+            }
+            catch { }
+            return new List<KeybindEntry>();
+        }
+
+        private void SaveKeybinds()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_keybindsPath)!);
+                File.WriteAllText(_keybindsPath, JsonConvert.SerializeObject(Keybinds.ToList(), Formatting.Indented));
+            }
+            catch { }
+        }
+
+        private void PreviewStartup_Click(object sender, RoutedEventArgs e)
+            => PlaySound("sunet_deschidere.wav", new SoundConfig { Enabled = true, Volume = SoundStartupSlider.Value });
+
+        private void PreviewJoinVoice_Click(object sender, RoutedEventArgs e)
+            => PlaySound("intrare_voice.wav", new SoundConfig { Enabled = true, Volume = SoundJoinVoiceSlider.Value });
+
+        private void PreviewLeaveVoice_Click(object sender, RoutedEventArgs e)
+            => PlaySound("iesire_voice.wav", new SoundConfig { Enabled = true, Volume = SoundLeaveVoiceSlider.Value });
+
+        private void PreviewMute_Click(object sender, RoutedEventArgs e)
+            => PlaySound("zavor_inchis.wav", new SoundConfig { Enabled = true, Volume = SoundMuteSlider.Value });
+
+        private void PreviewUnmute_Click(object sender, RoutedEventArgs e)
+            => PlaySound("zavor_deschis.wav", new SoundConfig { Enabled = true, Volume = SoundUnmuteSlider.Value });
+
+        private void PreviewDeafen_Click(object sender, RoutedEventArgs e)
+            => PlaySound("zavor_inchis.wav", new SoundConfig { Enabled = true, Volume = SoundDeafenSlider.Value });
+
+        private void PreviewUndeafen_Click(object sender, RoutedEventArgs e)
+            => PlaySound("zavor_deschis.wav", new SoundConfig { Enabled = true, Volume = SoundUndeafenSlider.Value });
+
+        private void PreviewMessage_Click(object sender, RoutedEventArgs e)
+            => PlaySound("mesaje.wav", new SoundConfig { Enabled = true, Volume = SoundMessageSlider.Value });
+
+        private void PreviewMention_Click(object sender, RoutedEventArgs e)
+            => PlaySound("mention.wav", new SoundConfig { Enabled = true, Volume = SoundMentionSlider.Value });
+
         private void VoiceSettingsOverlay_MouseDown(object sender, MouseButtonEventArgs e)
         {
             if (_capturingPttKey) { _capturingPttKey = false; PttCaptureHint.Visibility = Visibility.Collapsed; PttKeyButton.IsEnabled = true; }
+            _capturingKeybindEntry = null;
             SaveVoiceSettings();
+            SaveSoundSettingsFromUI();
+            SaveSoundSettings();
+            SaveKeybinds();
             VoiceSettingsOverlay.Visibility = Visibility.Collapsed;
         }
 
         private void CloseVoiceSettings_Click(object sender, RoutedEventArgs e)
         {
             if (_capturingPttKey) { _capturingPttKey = false; PttCaptureHint.Visibility = Visibility.Collapsed; PttKeyButton.IsEnabled = true; }
+            _capturingKeybindEntry = null;
             SaveVoiceSettings();
+            SaveSoundSettingsFromUI();
+            SaveSoundSettings();
+            SaveKeybinds();
             VoiceSettingsOverlay.Visibility = Visibility.Collapsed;
         }
 
@@ -1430,10 +1667,40 @@ namespace DevTavern.Client
                 return;
             }
 
+            if (_capturingKeybindEntry != null)
+            {
+                e.Handled = true;
+                _capturingKeybindEntry.Key = e.Key != Key.Escape
+                    ? (new KeyConverter().ConvertToString(e.Key) ?? e.Key.ToString())
+                    : _capturingKeybindPrevKey;
+                _capturingKeybindEntry = null;
+                return;
+            }
+
             if (!_isVadMode && !_isPttActive)
             {
                 var keyStr = new KeyConverter().ConvertToString(e.Key) ?? e.Key.ToString();
                 if (keyStr == _pttKey) _isPttActive = true;
+            }
+
+            if (!e.IsRepeat)
+            {
+                var kStr = new KeyConverter().ConvertToString(e.Key) ?? e.Key.ToString();
+                foreach (var kb in Keybinds)
+                {
+                    if (kb.Key != kStr) continue;
+                    switch (kb.Action)
+                    {
+                        case "Toggle Mute":   _ = ExecuteToggleMuteAsync();   e.Handled = true; break;
+                        case "Toggle Deafen": _ = ExecuteToggleDeafenAsync(); e.Handled = true; break;
+                        case "Push to Mute":
+                            if (!_pushMuteActive && !_isMuted) { _pushMuteActive = true; _ = ExecuteToggleMuteAsync(); e.Handled = true; }
+                            break;
+                        case "Push to Deafen":
+                            if (!_pushDeafenActive && !_isDeafened) { _pushDeafenActive = true; _ = ExecuteToggleDeafenAsync(); e.Handled = true; }
+                            break;
+                    }
+                }
             }
 
             base.OnPreviewKeyDown(e);
@@ -1446,6 +1713,22 @@ namespace DevTavern.Client
                 var keyStr = new KeyConverter().ConvertToString(e.Key) ?? e.Key.ToString();
                 if (keyStr == _pttKey) _isPttActive = false;
             }
+
+            var kStr = new KeyConverter().ConvertToString(e.Key) ?? e.Key.ToString();
+            foreach (var kb in Keybinds)
+            {
+                if (kb.Key != kStr) continue;
+                switch (kb.Action)
+                {
+                    case "Push to Mute":
+                        if (_pushMuteActive && _isMuted) { _pushMuteActive = false; _ = ExecuteToggleMuteAsync(); }
+                        break;
+                    case "Push to Deafen":
+                        if (_pushDeafenActive && _isDeafened) { _pushDeafenActive = false; _ = ExecuteToggleDeafenAsync(); }
+                        break;
+                }
+            }
+
             base.OnPreviewKeyUp(e);
         }
 
@@ -2900,7 +3183,7 @@ namespace DevTavern.Client
                         {
                             var resp = await _apiClient.GetStringAsync($"messages/channel/{channel.Id}");
                             var arr = JArray.Parse(resp);
-                            int newCount = arr.Count;
+                            int newCount = arr.Count(m => !(m["isDeleted"]?.ToObject<bool>() ?? false));
 
                             if (!_lastSeenMessageCount.TryGetValue(channel.Id, out int lastSeen))
                             {
@@ -2912,9 +3195,10 @@ namespace DevTavern.Client
                             if (newCount > lastSeen)
                             {
                                 int mentions = 0;
-                                for (int i = lastSeen; i < arr.Count; i++)
+                                var visibleArr = arr.Where(m => !(m["isDeleted"]?.ToObject<bool>() ?? false)).ToList();
+                                for (int i = lastSeen; i < visibleArr.Count; i++)
                                 {
-                                    string content = arr[i]["content"]?.ToString() ?? "";
+                                    string content = visibleArr[i]["content"]?.ToString() ?? "";
                                     if (content.Contains("@" + _username, StringComparison.OrdinalIgnoreCase))
                                         mentions++;
                                 }
@@ -3209,5 +3493,27 @@ namespace DevTavern.Client
             if (!editor.TextArea.TextView.LineTransformers.OfType<DarkModeColorizer>().Any())
                 editor.TextArea.TextView.LineTransformers.Add(new DarkModeColorizer());
         }
+    }
+
+    public class KeybindEntry : INotifyPropertyChanged
+    {
+        private string _key = "Click to bind";
+        private string _action = "Toggle Mute";
+
+        public string Key
+        {
+            get => _key;
+            set { _key = value; OnPropertyChanged(); }
+        }
+
+        public string Action
+        {
+            get => _action;
+            set { _action = value; OnPropertyChanged(); }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? p = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(p));
     }
 }
