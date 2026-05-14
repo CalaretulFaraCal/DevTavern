@@ -28,10 +28,19 @@ namespace DevTavern.Server.Controllers
         public async Task<ActionResult<IEnumerable<Message>>> GetMessagesForChannel(int channelId)
         {
             var channelMessages = await _context.Messages
+                .AsNoTracking()
                 .Include(m => m.User)
                 .Where(m => m.ChannelId == channelId)
                 .OrderBy(m => m.SentAt)
                 .ToListAsync();
+
+            foreach (var message in channelMessages)
+            {
+                if (message.IsDeleted)
+                {
+                    message.Content = "[Acest mesaj a fost sters]";
+                }
+            }
 
             return Ok(channelMessages);
         }
@@ -87,7 +96,6 @@ namespace DevTavern.Server.Controllers
             if (message.IsDeleted) return BadRequest("Mesajul a fost deja sters.");
 
             message.IsDeleted = true;
-            message.Content = "[Acest mesaj a fost sters]";
 
             _messageRepository.Update(message);
             await _messageRepository.SaveChangesAsync();
