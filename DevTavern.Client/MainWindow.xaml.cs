@@ -31,12 +31,19 @@ namespace DevTavern.Client
         private readonly List<RepoItem> _projects;
         private readonly string _username;
         private readonly string _avatarUrl;
-        private readonly string _displayName;
+        private string _displayName;
 
         private string? _selectedProject;
         private int _selectedChannelId;
         private bool _membersPanelVisible = false;
         private ChannelItem? _editingChannel = null;
+
+        // Persist sidebar width across project switches
+        private double _channelPanelWidth = 240;
+
+
+        // Per-channel message drafts
+        private readonly Dictionary<int, string> _channelDrafts = new();
 
         // Channels per project: projectName -> list of channels
         private readonly Dictionary<string, ObservableCollection<ChannelItem>> _projectChannels = new();
@@ -50,10 +57,13 @@ namespace DevTavern.Client
         private bool _capturingPttKey = false;
         private string _pttKey = "Caps Lock";
         private bool _isPttActive = false;
+        private double _vadThresholdRms = 2000.0;
         private double _inputVolumeScale = 1.0;
         private double _outputVolumeScale = 1.0;
         private bool _isVadMode = true;
-        private double _vadThresholdRms = 0;
+        
+        public ObservableCollection<ActivityItem> HomeActivities { get; set; } = new ObservableCollection<ActivityItem>();
+
         private static readonly string _voiceSettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevTavern", "voice_settings.json");
         private static readonly string _soundSettingsPath = Path.Combine(
@@ -139,6 +149,15 @@ namespace DevTavern.Client
             UserInitials.Text = _username.Length >= 2
                 ? _username.Substring(0, 2).ToUpper()
                 : _username.ToUpper();
+                
+            ProfileBarUsername.Text = _displayName;
+            PopupUsername.Text = _displayName;
+            ResolveDisplayNameAsync(_username, name =>
+            {
+                _displayName = name;
+                ProfileBarUsername.Text = name;
+                PopupUsername.Text = name;
+            });
 
             // Load GitHub avatar
             if (!string.IsNullOrEmpty(_avatarUrl))
@@ -154,6 +173,8 @@ namespace DevTavern.Client
             }
 
             MessageInput.Text = "";
+
+            HomeActivityFeed.ItemsSource = HomeActivities;
 
             // Show home view on startup
             ShowHomeView();
@@ -381,7 +402,7 @@ namespace DevTavern.Client
                     var channel = FindVoiceChannelByKey(channelKey);
                     if (channel == null) return;
                     if (channel.VoiceMembers.Any(m => m.Username == joinedUsername)) return;
-                    channel.VoiceMembers.Add(new VoiceMember { Username = joinedUsername, AvatarUrl = GetAvatarUrl(joinedUsername) });
+                    channel.VoiceMembers.Add(new VoiceMember { Username = joinedUsername, DisplayName = GetDisplayName(joinedUsername), AvatarUrl = GetAvatarUrl(joinedUsername) });
                 });
             });
 
@@ -513,14 +534,16 @@ namespace DevTavern.Client
                                     role = memberUsername == _username ? "Owner (You)" : "Owner";
                                 }
 
-                                _projectMembers[project.name].Add(new MemberItem
+                                var member = new MemberItem
                                 {
                                     Username = memberUsername,
                                     Initials = memberUsername.Length >= 2 ? memberUsername.Substring(0, 2).ToUpper() : memberUsername.ToUpper(),
                                     Role = role,
                                     IsOnline = memberUsername == _username,
                                     AvatarUrl = memberAvatar
-                                });
+                                };
+                                _projectMembers[project.name].Add(member);
+                                ResolveDisplayNameAsync(memberUsername, name => member.DisplayName = name);
                             }
                         }
                     }
@@ -529,14 +552,16 @@ namespace DevTavern.Client
                     // Genereaza lista locala, chiar daca e goala (eroare API)
                     if (_projectMembers[project.name].Count == 0)
                     {
-                        _projectMembers[project.name].Add(new MemberItem
+                        var member = new MemberItem
                         {
                             Username = _username,
                             Initials = UserInitials.Text,
                             Role = "Owner",
                             IsOnline = true,
                             AvatarUrl = _avatarUrl
-                        });
+                        };
+                        _projectMembers[project.name].Add(member);
+                        ResolveDisplayNameAsync(_username, name => member.DisplayName = name);
                     }
 
                     // Aducem rolurile custom din BD Server
@@ -585,6 +610,99 @@ namespace DevTavern.Client
             InputVolumeSlider.ValueChanged += (s, e2) => _inputVolumeScale = InputVolumeSlider.Value / 100.0;
             OutputVolumeSlider.ValueChanged += (s, e2) => _outputVolumeScale = OutputVolumeSlider.Value / 100.0;
             SensitivitySlider.ValueChanged += (s, e2) => _vadThresholdRms = 32767.0 * Math.Pow(10.0, SensitivitySlider.Value / 20.0);
+
+            _ = FetchRecentGitHubActivity();
+        }
+
+        private async Task FetchRecentGitHubActivity()
+        {
+            try
+            {
+                using var ghClient = new HttpClient();
+                ghClient.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                ghClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+
+                var resp = await ghClient.GetAsync($"https://api.github.com/users/{_username}/events/public");
+                if (!resp.IsSuccessStatusCode) return;
+
+                var eventsJson = Newtonsoft.Json.Linq.JArray.Parse(await resp.Content.ReadAsStringAsync());
+                
+                Application.Current.Dispatcher.Invoke(() => HomeActivities.Clear());
+                int count = 0;
+                foreach (var ev in eventsJson)
+                {
+                    if (count >= 5) break;
+
+                    string type = ev["type"]?.ToString() ?? "";
+                    string repoName = ev["repo"]?["name"]?.ToString() ?? "Unknown";
+                    string createdAt = ev["created_at"]?.ToString() ?? "";
+                    string timeAgo = "";
+
+                    if (DateTime.TryParse(createdAt, out DateTime dt))
+                    {
+                        var span = DateTime.UtcNow - dt;
+                        if (span.TotalHours < 1) timeAgo = $"{Math.Max(1, (int)span.TotalMinutes)} minutes ago";
+                        else if (span.TotalDays < 1) timeAgo = $"{(int)span.TotalHours} hours ago";
+                        else timeAgo = $"{(int)span.TotalDays} days ago";
+                    }
+
+                    var item = new ActivityItem { ProjectName = repoName.Split('/').Last(), TimeAgo = timeAgo };
+
+                    if (type == "PushEvent")
+                    {
+                        var commits = ev["payload"]?["commits"] as Newtonsoft.Json.Linq.JArray;
+                        int commitCount = commits?.Count ?? 0;
+                        string branch = ev["payload"]?["ref"]?.ToString().Replace("refs/heads/", "") ?? "main";
+
+                        item.Icon = "📦";
+                        item.ActionTitle = $"Pushed {commitCount} commit{(commitCount != 1 ? "s" : "")} to {branch}";
+                        item.ActionDetails = $" · by {_username}";
+                    }
+                    else if (type == "CreateEvent")
+                    {
+                        string refType = ev["payload"]?["ref_type"]?.ToString() ?? "";
+                        item.Icon = "🚀";
+                        item.ActionTitle = $"Created {refType}";
+                        item.ActionDetails = $" · by {_username}";
+                    }
+                    else if (type == "IssueCommentEvent")
+                    {
+                        item.Icon = "💬";
+                        item.ActionTitle = "Commented on an issue";
+                        item.ActionDetails = $" · by {_username}";
+                    }
+                    else if (type == "IssuesEvent")
+                    {
+                        string action = ev["payload"]?["action"]?.ToString() ?? "";
+                        item.Icon = "🐛";
+                        item.ActionTitle = $"{char.ToUpper(action[0]) + action.Substring(1)} an issue";
+                        item.ActionDetails = $" · by {_username}";
+                    }
+                    else if (type == "PullRequestEvent")
+                    {
+                        string action = ev["payload"]?["action"]?.ToString() ?? "";
+                        item.Icon = "🔄";
+                        item.ActionTitle = $"{char.ToUpper(action[0]) + action.Substring(1)} a pull request";
+                        item.ActionDetails = $" · by {_username}";
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    Application.Current.Dispatcher.Invoke(() => HomeActivities.Add(item));
+                    count++;
+                }
+                
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    if (HomeActivities.Count == 0)
+                    {
+                        HomeActivities.Add(new ActivityItem { Icon = "📭", ActionTitle = "No recent activity found", ProjectName = "Your GitHub", ActionDetails = " · Go make some commits!" });
+                    }
+                });
+            }
+            catch { }
         }
 
         private string GenerateIconLetters(string name)
@@ -614,6 +732,7 @@ namespace DevTavern.Client
 
                 _selectedProject = selected.name;
                 SelectedProjectName.Text = selected.name;
+                ServerSettingsHeaderButton.Visibility = Visibility.Visible;
 
                 try
                 {
@@ -668,6 +787,7 @@ namespace DevTavern.Client
 
                 HomeView.Visibility = Visibility.Collapsed;
                 ChatView.Visibility = Visibility.Visible;
+                ShowChannelPanel();
                 
                 if (_codeBrowserVisible)
                 {
@@ -835,8 +955,23 @@ namespace DevTavern.Client
 
             MiniProfilePanel.Visibility = Visibility.Visible;
 
-            // Fetch full name in background only if not yet cached
-            if (!_fullNameCache.ContainsKey(username))
+            // Fetch full name in background if not cached
+            ResolveDisplayNameAsync(username, (fullName) =>
+            {
+                if (MiniProfilePanel.Visibility == Visibility.Visible && ProfileUsername.Text == $"@{username}")
+                    ProfileFullName.Text = fullName;
+            });
+        }
+
+        private void ResolveDisplayNameAsync(string username, Action<string> onResolved)
+        {
+            if (_fullNameCache.TryGetValue(username, out var cached) && !string.IsNullOrEmpty(cached))
+            {
+                onResolved(cached);
+                return;
+            }
+
+            Task.Run(async () =>
             {
                 try
                 {
@@ -849,20 +984,35 @@ namespace DevTavern.Client
                         var json = JObject.Parse(await resp.Content.ReadAsStringAsync());
                         var name = json["name"]?.ToString();
                         var fullName = !string.IsNullOrEmpty(name) ? name : username;
-                        _fullNameCache[username] = fullName;
-                        if (MiniProfilePanel.Visibility == Visibility.Visible && ProfileUsername.Text == $"@{username}")
-                            ProfileFullName.Text = fullName;
+                        
+                        Application.Current.Dispatcher.Invoke(() =>
+                        {
+                            _fullNameCache[username] = fullName;
+                            onResolved(fullName);
+                        });
                     }
                 }
                 catch { }
-            }
+            });
         }
 
         private void Window_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
+            // Close user profile popup when clicking outside it
+            if (UserProfilePopup.IsOpen)
+            {
+                var popupBorder = UserProfilePopup.Child as FrameworkElement;
+                if (popupBorder != null)
+                {
+                    var pos = e.GetPosition(popupBorder);
+                    if (pos.X < 0 || pos.Y < 0 || pos.X > popupBorder.ActualWidth || pos.Y > popupBorder.ActualHeight)
+                        UserProfilePopup.IsOpen = false;
+                }
+            }
+
             if (MiniProfilePanel.Visibility != Visibility.Visible) return;
-            var pos = e.GetPosition(MiniProfilePanel);
-            if (pos.X < 0 || pos.Y < 0 || pos.X > MiniProfilePanel.ActualWidth || pos.Y > MiniProfilePanel.ActualHeight)
+            var mpos = e.GetPosition(MiniProfilePanel);
+            if (mpos.X < 0 || mpos.Y < 0 || mpos.X > MiniProfilePanel.ActualWidth || mpos.Y > MiniProfilePanel.ActualHeight)
             {
                 MiniProfilePanel.Visibility = Visibility.Collapsed;
                 e.Handled = true;
@@ -901,18 +1051,172 @@ namespace DevTavern.Client
             HomeView.Visibility = Visibility.Visible;
 
             HomeWelcomeText.Text = $"Welcome back, {_username}!";
-            HomeProjectCountText.Text = $"{_projects.Count} project{(_projects.Count != 1 ? "s" : "")} imported";
-            HomeProjectList.ItemsSource = _projects;
+            HomeProjectCards.ItemsSource = _projects;
+
+            // Apply Wide Sidebar
+            ProjectPanelColumn.Width = new GridLength(240);
+            ProjectList.ItemContainerStyle = (Style)FindResource("WideProjectItemStyle");
+            ProjectList.ItemTemplate = (DataTemplate)FindResource("WideProjectItemTemplate");
+            
+            HomeButton.Width = 216;
+            HomeIcon.Margin = new Thickness(0,0,8,0);
+            HomeText.Visibility = Visibility.Visible;
+            if (HomeButton.ToolTip is ToolTip ht) ht.Visibility = Visibility.Collapsed;
+            
+            AddProjectButton.Width = 216;
+            AddProjectIcon.Margin = new Thickness(0,-2,8,0);
+            AddProjectButton.Margin = new Thickness(0, 0, 0, 8);
+            AddProjectStack.HorizontalAlignment = HorizontalAlignment.Center;
+            AddProjectStack.Margin = new Thickness(0);
+            AddProjectText.Visibility = Visibility.Visible;
+            if (AddProjectButton.ToolTip is string) AddProjectButton.ToolTip = null;
+
+            ProfileBarUsername.Visibility = Visibility.Visible;
+            ProfileSettingsButton.Visibility = Visibility.Visible;
+            ProfileSettingsButton.Margin = new Thickness(0,0,16,0);
+            UserInitials.Margin = new Thickness(0);
+            UserAvatarImage.Margin = new Thickness(0);
+            ProfileBarUsername.Text = PopupUsername.Text; // Assuming it's already set or initialized
+            if (ProfileBarBorder != null) ProfileBarBorder.Padding = new Thickness(16, 12, 16, 12);
+
+            // Save current channel panel width before hiding
+            if (ChannelPanelColumn.Width.Value > 0)
+                _channelPanelWidth = ChannelPanelColumn.Width.Value;
+
+            // Hide channel panel and its splitter on Home
+            ChannelPanelColumn.Width = new GridLength(0);
+            ChannelPanelColumn.MinWidth = 0;
+            ChannelPanelColumn.MaxWidth = 0;
+            ChannelPanelBorder.Visibility = Visibility.Collapsed;
+            ChannelSplitterColumn.Width = new GridLength(0);
+            ChannelSplitter.Visibility = Visibility.Collapsed;
+
+            // Hide the Server Settings button when on home (no project selected)
+            ServerSettingsHeaderButton.Visibility = Visibility.Collapsed;
 
             _membersPanelVisible = false;
             MembersPanelColumn.Width = new GridLength(0);
             MembersPanelBorder.Visibility = Visibility.Collapsed;
         }
 
+        private void ShowChannelPanel()
+        {
+
+            // Apply Narrow Sidebar
+            ProjectPanelColumn.Width = new GridLength(64);
+            ProjectList.ItemContainerStyle = (Style)FindResource("NarrowProjectItemStyle");
+            ProjectList.ItemTemplate = (DataTemplate)FindResource("NarrowProjectItemTemplate");
+            
+            HomeButton.Width = 40;
+            HomeIcon.Margin = new Thickness(0);
+            HomeIcon.HorizontalAlignment = HorizontalAlignment.Center;
+            HomeText.Visibility = Visibility.Collapsed;
+            if (HomeButton.ToolTip is ToolTip ht2) ht2.Visibility = Visibility.Visible;
+            
+            AddProjectButton.Width = 40;
+            AddProjectIcon.Margin = new Thickness(0,-2,0,0);
+            AddProjectIcon.HorizontalAlignment = HorizontalAlignment.Center;
+            AddProjectButton.Margin = new Thickness(0, 0, 0, 8);
+            AddProjectStack.HorizontalAlignment = HorizontalAlignment.Center;
+            AddProjectStack.Margin = new Thickness(0);
+            AddProjectText.Visibility = Visibility.Collapsed;
+            AddProjectButton.ToolTip = "Add Project";
+
+            UserInitials.Margin = new Thickness(0);
+            UserAvatarImage.Margin = new Thickness(0);
+            if (ProfileBarBorder != null) ProfileBarBorder.Padding = new Thickness(16, 12, 16, 12);
+            if (ProfileBarUsername != null) ProfileBarUsername.Visibility = Visibility.Visible;
+            if (ProfileSettingsButton != null)
+            {
+                ProfileSettingsButton.Visibility = Visibility.Visible;
+                ProfileSettingsButton.Margin = new Thickness(0, 0, 16, 0);
+            }
+
+            ChannelPanelColumn.MinWidth = 180;
+            ChannelPanelColumn.MaxWidth = 360;
+            // Restore persisted width
+            ChannelPanelColumn.Width = new GridLength(Math.Max(180, Math.Min(360, _channelPanelWidth)));
+            ChannelPanelBorder.Visibility = Visibility.Visible;
+            // Show the splitter so user can resize the channel panel
+            ChannelSplitterColumn.Width = new GridLength(4);
+            ChannelSplitter.Visibility = Visibility.Visible;
+        }
+
+        // Navigate to a project by clicking a dashboard card
+        private void HomeProjectCard_Click(object sender, MouseButtonEventArgs e)
+        {
+            if ((sender as FrameworkElement)?.Tag is RepoItem project)
+            {
+                var idx = _projects.IndexOf(project);
+                if (idx >= 0)
+                    ProjectList.SelectedIndex = idx;
+            }
+        }
+
+        // User avatar bar clicked → show popup flyout
+        private void UserAvatarBar_Click(object sender, MouseButtonEventArgs e)
+        {
+            // Prefer the real GitHub display name cached from API; fall back to _displayName, then @username
+            string realName = _username;
+            if (_fullNameCache.TryGetValue(_username, out var cached) && !string.IsNullOrEmpty(cached))
+                realName = cached;
+            else if (!string.IsNullOrEmpty(_displayName))
+                realName = _displayName;
+            PopupUsername.Text = realName;
+            UserProfilePopup.IsOpen = !UserProfilePopup.IsOpen;
+        }
+
+
+
+        private void PopupLogout_Click(object sender, MouseButtonEventArgs e)
+        {
+            UserProfilePopup.IsOpen = false;
+            LogoutButton_Click(sender, e);
+        }
+
+        // Theme toggle in Settings → Appearance section
+        private void ThemeToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            // Light mode (placeholder - theme switching requires App.xaml resource swap)
+            if (ThemeModeLabel != null) ThemeModeLabel.Text = "Currently: Light";
+        }
+
+        private void ThemeToggle_Unchecked(object sender, RoutedEventArgs e)
+        {
+            if (ThemeModeLabel != null) ThemeModeLabel.Text = "Currently: Dark";
+        }
+
+        // Bubble scroll events from ListBox up to the parent ScrollViewer
+        private void ChannelList_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (!e.Handled)
+            {
+                e.Handled = true;
+                var eventArg = new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
+                {
+                    RoutedEvent = UIElement.MouseWheelEvent,
+                    Source = sender
+                };
+                ((UIElement)sender).RaiseEvent(eventArg);
+            }
+        }
+
+        private void ThemeToggleButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Placeholder for future theme switching logic
+        }
+
+
         private async void ChannelList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (ChannelList.SelectedItem is ChannelItem selectedChannel && _selectedProject != null)
             {
+                // Save draft for the old channel
+                if (_selectedChannelId > 0)
+                {
+                    _channelDrafts[_selectedChannelId] = MessageInput.Text ?? "";
+                }
+
                 // ---- Leave old group and Join new group in SignalR ----
                 int oldChannelId = _selectedChannelId;
                 _selectedChannelId = selectedChannel.Id;
@@ -1013,6 +1317,17 @@ namespace DevTavern.Client
                 _lastSeenMessageCount[_selectedChannelId] = Messages.Count(m => !m.IsSystemMessage && !m.IsDateSeparator);
                 UpdateProjectBadge(_selectedProject ?? "");
 
+                // Restore draft for the new channel
+                if (_channelDrafts.TryGetValue(_selectedChannelId, out var draft))
+                {
+                    MessageInput.Text = draft;
+                    MessageInput.CaretIndex = draft.Length;
+                }
+                else
+                {
+                    MessageInput.Text = "";
+                }
+
                 MessageInput.Focus();
             }
         }
@@ -1066,7 +1381,7 @@ namespace DevTavern.Client
             if (_currentVoiceChannel == selected) return;
             LeaveCurrentVoiceChannel();
             selected.IsJoined = true;
-            selected.VoiceMembers.Add(new VoiceMember { Username = _username, AvatarUrl = _avatarUrl });
+            selected.VoiceMembers.Add(new VoiceMember { Username = _username, DisplayName = _displayName, AvatarUrl = _avatarUrl });
             _currentVoiceChannel = selected;
             var projectDbId = _projects.FirstOrDefault(p => p.name == _selectedProject)?.DbId ?? 0;
             _currentVoiceGroupKey = $"{projectDbId}_{selected.Name}";
@@ -1104,6 +1419,18 @@ namespace DevTavern.Client
                 if (!string.IsNullOrEmpty(m?.AvatarUrl)) return m.AvatarUrl;
             }
             return null;
+        }
+
+        private string GetDisplayName(string username)
+        {
+            if (username == _username) return _displayName;
+            foreach (var members in _projectMembers.Values)
+            {
+                var m = members.FirstOrDefault(x => x.Username == username);
+                if (m != null && !string.IsNullOrEmpty(m.DisplayName) && m.DisplayName != m.Username) return m.DisplayName;
+            }
+            if (_fullNameCache.TryGetValue(username, out var name)) return name;
+            return username;
         }
 
         private ChannelItem? FindVoiceChannelByKey(string channelKey)
@@ -1280,6 +1607,12 @@ namespace DevTavern.Client
         }
 
         private void VoiceSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            PopulateAudioDevices();
+            VoiceSettingsOverlay.Visibility = Visibility.Visible;
+        }
+
+        private void ApplicationSettingsBtn_Click(object sender, RoutedEventArgs e)
         {
             PopulateAudioDevices();
             VoiceSettingsOverlay.Visibility = Visibility.Visible;
@@ -1961,10 +2294,10 @@ namespace DevTavern.Client
                 _isMentioning = true;
                 _mentionStartIndex = atIndex;
 
-                // Filter members matching the query
+                // Filter members matching the query by username or display name
                 if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
                 {
-                    var filtered = members.Where(m => m.Username.ToLower().Contains(query)).ToList();
+                    var filtered = members.Where(m => m.Username.ToLower().Contains(query) || m.DisplayName.ToLower().Contains(query)).ToList();
                     if (filtered.Count > 0)
                     {
                         MentionPopup.ItemsSource = filtered;
@@ -2076,10 +2409,65 @@ namespace DevTavern.Client
 
         // POST /api/messages — salveaza mesajul in DB
         // Hub SendLiveMessage — trimite mesajul live la toti
+        private string? _attachedImagePath = null;
+        
+        private void AttachImage_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "Image Files|*.jpg;*.jpeg;*.png;*.gif;*.bmp",
+                Title = "Select an Image to Attach"
+            };
+            if (dlg.ShowDialog() == true)
+            {
+                _attachedImagePath = dlg.FileName;
+                var fileName = System.IO.Path.GetFileName(_attachedImagePath);
+                MessageInput.Text += $"[Attached Image: {fileName}]";
+            }
+        }
+
+        private string CompressImageToBase64(string imagePath, int maxWidth = 800)
+        {
+            try
+            {
+                var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                bmp.BeginInit();
+                bmp.UriSource = new Uri(imagePath);
+                bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                bmp.DecodePixelWidth = maxWidth;
+                bmp.EndInit();
+
+                var encoder = new System.Windows.Media.Imaging.JpegBitmapEncoder();
+                encoder.QualityLevel = 70;
+                encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
+
+                using var ms = new System.IO.MemoryStream();
+                encoder.Save(ms);
+                return "data:image/jpeg;base64," + Convert.ToBase64String(ms.ToArray());
+            }
+            catch { return ""; }
+        }
+
         private async void SendMessage()
         {
-            var text = MessageInput.Text?.Trim();
-            if (string.IsNullOrEmpty(text) || _selectedProject == null || _selectedChannelId == 0) return;
+            var text = MessageInput.Text?.Trim() ?? "";
+            
+            string finalContent = text;
+            if (!string.IsNullOrEmpty(_attachedImagePath) && System.IO.File.Exists(_attachedImagePath))
+            {
+                string base64 = CompressImageToBase64(_attachedImagePath);
+                if (!string.IsNullOrEmpty(base64))
+                {
+                    string placeholder = $"[Attached Image: {System.IO.Path.GetFileName(_attachedImagePath)}]";
+                    if (finalContent.Contains(placeholder))
+                        finalContent = finalContent.Replace(placeholder, "").Trim();
+
+                    finalContent += $"\n[IMAGE:{base64}]";
+                }
+                _attachedImagePath = null;
+            }
+
+            if (string.IsNullOrEmpty(finalContent) || _selectedProject == null || _selectedChannelId == 0) return;
 
             // Afisam mesajul local imediat (optimistic UI)
             DateTime sendTime = DateTime.Now;
@@ -2094,7 +2482,7 @@ namespace DevTavern.Client
                 AvatarColor = "#238636",
                 UsernameColor = "#238636",
                 AvatarUrl = string.IsNullOrEmpty(_avatarUrl) ? null : _avatarUrl,
-                Content = text,
+                Content = finalContent,
                 Timestamp = sendTime.ToString("HH:mm"),
                 IsSystemMessage = false,
                 IsMentioningMe = text.Contains("@" + _username, StringComparison.OrdinalIgnoreCase),
@@ -2112,7 +2500,7 @@ namespace DevTavern.Client
             try
             {
                 // Salvare in DB
-                var postData = new { Content = text, UserId = _currentUserId, ChannelId = _selectedChannelId };
+                var postData = new { Content = finalContent, UserId = _currentUserId, ChannelId = _selectedChannelId };
                 var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
                 var sendResp = await _apiClient.PostAsync("messages", content);
                 if (sendResp.IsSuccessStatusCode)
@@ -2124,7 +2512,7 @@ namespace DevTavern.Client
                 // Trimitere live catre grupul canalului curent (SignalR)
                 if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected)
                 {
-                    await _hubConnection.InvokeAsync("SendLiveMessage", _selectedChannelId.ToString(), _username, _avatarUrl, text);
+                    await _hubConnection.InvokeAsync("SendLiveMessage", _selectedChannelId.ToString(), _username, _avatarUrl, finalContent);
                 }
             }
             catch { }
@@ -2756,8 +3144,25 @@ namespace DevTavern.Client
 
         // ========== Set Roles Overlay ==========
 
-        private void SetRoleButton_Click(object sender, RoutedEventArgs e)
+        private string? _targetMemberForRoles = null;
+
+        private void ServerSettingsButton_Click(object sender, RoutedEventArgs e)
         {
+            MessageBox.Show("Server Settings will be available in a future update.\nFor now, you can right click on any member to assign roles.", "Server Settings", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void MemberAssignRole_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuItem mi && mi.DataContext is MemberItem member)
+            {
+                OpenRoleSelectionFor(member.Username);
+            }
+        }
+
+        private void OpenRoleSelectionFor(string targetUsername)
+        {
+            _targetMemberForRoles = targetUsername;
+            
             // Reset checkboxes
             foreach (UIElement child in RoleCheckboxesContainer.Children)
             {
@@ -2770,7 +3175,7 @@ namespace DevTavern.Client
             // Check the ones the user already has
             if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
             {
-                var me = members.FirstOrDefault(m => m.Username == _username);
+                var me = members.FirstOrDefault(m => m.Username == targetUsername);
                 if (me != null && me.DevRoles != null)
                 {
                     foreach (UIElement child in RoleCheckboxesContainer.Children)
@@ -2791,13 +3196,42 @@ namespace DevTavern.Client
             RoleSelectionOverlay.Visibility = Visibility.Collapsed;
         }
 
+        private void ProfileSettings_Click(object sender, RoutedEventArgs e)
+        {
+            PopulateAudioDevices();
+            VoiceSettingsOverlay.Visibility = Visibility.Visible;
+            
+            // Activate Voice Tab
+            VoiceTabContent.Visibility = Visibility.Visible;
+            AppTabContent.Visibility = Visibility.Collapsed;
+            KeybindsTabContent.Visibility = Visibility.Collapsed;
+            SetTabActive(SettingsTabVoiceBtn, true);
+            SetTabActive(SettingsTabAppBtn, false);
+            SetTabActive(SettingsTabKeybindsBtn, false);
+        }
+
+        private void PopupSettings_Click(object sender, MouseButtonEventArgs e)
+        {
+            UserProfilePopup.IsOpen = false;
+            PopulateAudioDevices();
+            VoiceSettingsOverlay.Visibility = Visibility.Visible;
+            
+            // Activate App Tab (General Settings)
+            VoiceTabContent.Visibility = Visibility.Collapsed;
+            AppTabContent.Visibility = Visibility.Visible;
+            KeybindsTabContent.Visibility = Visibility.Collapsed;
+            SetTabActive(SettingsTabVoiceBtn, false);
+            SetTabActive(SettingsTabAppBtn, true);
+            SetTabActive(SettingsTabKeybindsBtn, false);
+        }
+
         private async void SaveRoles_Click(object sender, RoutedEventArgs e)
         {
             RoleSelectionOverlay.Visibility = Visibility.Collapsed;
 
-            if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members))
+            if (_selectedProject != null && _projectMembers.TryGetValue(_selectedProject, out var members) && _targetMemberForRoles != null)
             {
-                var me = members.FirstOrDefault(m => m.Username == _username);
+                var me = members.FirstOrDefault(m => m.Username == _targetMemberForRoles);
                 if (me != null)
                 {
                     me.DevRoles.Clear();
@@ -2976,14 +3410,16 @@ namespace DevTavern.Client
                                     role = memberUsername == _username ? "Owner (You)" : "Owner";
                                 }
 
-                                _projectMembers[project.name].Add(new MemberItem
+                                var member = new MemberItem
                                 {
                                     Username = memberUsername,
                                     Initials = memberUsername.Length >= 2 ? memberUsername.Substring(0, 2).ToUpper() : memberUsername.ToUpper(),
                                     Role = role,
                                     IsOnline = memberUsername == _username,
                                     AvatarUrl = memberAvatar
-                                });
+                                };
+                                _projectMembers[project.name].Add(member);
+                                ResolveDisplayNameAsync(memberUsername, name => member.DisplayName = name);
                             }
                         }
                     }
@@ -2991,14 +3427,16 @@ namespace DevTavern.Client
 
                     if (_projectMembers[project.name].Count == 0)
                     {
-                        _projectMembers[project.name].Add(new MemberItem
+                        var member = new MemberItem
                         {
                             Username = _username,
                             Initials = UserInitials.Text,
                             Role = "Owner",
                             IsOnline = true,
                             AvatarUrl = _avatarUrl
-                        });
+                        };
+                        _projectMembers[project.name].Add(member);
+                        ResolveDisplayNameAsync(_username, name => member.DisplayName = name);
                     }
                 }
                 catch { }
@@ -3027,6 +3465,11 @@ namespace DevTavern.Client
 
         private ChatMessage ParseMessageContent(ChatMessage msg)
         {
+            if (!msg.IsSystemMessage && !msg.IsDateSeparator && !string.IsNullOrEmpty(msg.Username))
+            {
+                ResolveDisplayNameAsync(msg.Username, name => msg.DisplayName = name);
+            }
+
             msg.DisplayContent = msg.Content;
             if (msg.Content.StartsWith("[CodeRef:") || msg.Content.Contains("\n[CodeRef:"))
             {
@@ -3068,6 +3511,24 @@ namespace DevTavern.Client
                     }
                 }
             }
+
+            // Handle [IMAGE:...]
+            while (msg.DisplayContent.Contains("[IMAGE:"))
+            {
+                int startIndex = msg.DisplayContent.IndexOf("[IMAGE:");
+                int endIndex = msg.DisplayContent.IndexOf("]", startIndex);
+                if (endIndex > startIndex)
+                {
+                    string imgData = msg.DisplayContent.Substring(startIndex + 7, endIndex - startIndex - 7);
+                    msg.ImageUrl = imgData; // Sets ImageUrl and triggers HasImage automatically
+                    
+                    string before = msg.DisplayContent.Substring(0, startIndex).Trim();
+                    string after = msg.DisplayContent.Substring(endIndex + 1).Trim();
+                    msg.DisplayContent = (before + "\n" + after).Trim();
+                }
+                else break;
+            }
+
             return msg;
         }
 
@@ -3224,6 +3685,14 @@ namespace DevTavern.Client
     public class ChatMessage : INotifyPropertyChanged
     {
         public string Username { get; set; } = "";
+        
+        private string _displayName = "";
+        public string DisplayName
+        {
+            get => string.IsNullOrEmpty(_displayName) ? Username : _displayName;
+            set { _displayName = value; OnPropertyChanged(); }
+        }
+
         public string Initials { get; set; } = "";
         public string AvatarColor { get; set; } = "#8B949E";
         public string UsernameColor { get; set; } = "#E6EDF3";
@@ -3282,6 +3751,70 @@ namespace DevTavern.Client
             ? ""
             : System.IO.Path.GetExtension(CodeFilePath);
 
+        private string _imageUrl = "";
+        public string ImageUrl
+        {
+            get => _imageUrl;
+            set
+            {
+                if (_imageUrl != value)
+                {
+                    _imageUrl = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(HasImage));
+                    UpdateImageMedia();
+                }
+            }
+        }
+        
+        public bool HasImage => !string.IsNullOrEmpty(ImageUrl);
+
+        private System.Windows.Media.ImageSource? _imageMedia;
+        public System.Windows.Media.ImageSource? ImageMedia
+        {
+            get => _imageMedia;
+            private set
+            {
+                _imageMedia = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private void UpdateImageMedia()
+        {
+            if (string.IsNullOrEmpty(_imageUrl))
+            {
+                ImageMedia = null;
+                return;
+            }
+
+            try
+            {
+                string base64Data = _imageUrl;
+                var match = System.Text.RegularExpressions.Regex.Match(_imageUrl, @"data:image/(?<type>.+?);base64,(?<data>.+)");
+                if (match.Success)
+                {
+                    base64Data = match.Groups["data"].Value;
+                }
+                
+                byte[] imageBytes = Convert.FromBase64String(base64Data);
+                var bitmap = new System.Windows.Media.Imaging.BitmapImage();
+                using (var ms = new System.IO.MemoryStream(imageBytes))
+                {
+                    bitmap.BeginInit();
+                    bitmap.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                    bitmap.StreamSource = ms;
+                    bitmap.EndInit();
+                }
+                bitmap.Freeze(); // Freeze to make it cross-thread accessible
+                ImageMedia = bitmap;
+            }
+            catch
+            {
+                ImageMedia = null;
+            }
+        }
+
         public bool IsDateSeparator { get; set; } = false;
         public string DateLabel { get; set; } = "";
         public DateTime MessageDate { get; set; } = DateTime.MinValue;
@@ -3331,6 +3864,13 @@ namespace DevTavern.Client
     {
         public string Username { get; set; } = "";
 
+        private string _displayName = "";
+        public string DisplayName
+        {
+            get => string.IsNullOrEmpty(_displayName) ? Username : _displayName;
+            set { _displayName = value; OnPropertyChanged(); }
+        }
+
         private bool _isMuted;
         public bool IsMuted
         {
@@ -3360,9 +3900,17 @@ namespace DevTavern.Client
             => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
     }
 
-    public class MemberItem
+    public class MemberItem : INotifyPropertyChanged
     {
         public string Username { get; set; } = "";
+
+        private string _displayName = "";
+        public string DisplayName
+        {
+            get => string.IsNullOrEmpty(_displayName) ? Username : _displayName;
+            set { _displayName = value; OnPropertyChanged(); }
+        }
+
         public string Initials { get; set; } = "";
         public string Role { get; set; } = "Member";
         public bool IsOnline { get; set; } = false;
@@ -3373,6 +3921,10 @@ namespace DevTavern.Client
         public List<string> DevRoles { get; set; } = new List<string>();
         public string RoleBadges => DevRoles != null && DevRoles.Count > 0 ? string.Join(" · ", DevRoles) : "";
         public bool HasDevRoles => DevRoles != null && DevRoles.Count > 0;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        protected void OnPropertyChanged([CallerMemberName] string? name = null) =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
     public class GitTreeNode
@@ -3412,52 +3964,84 @@ namespace DevTavern.Client
         }
     }
 
-    public static class TextBlockHelper
+    public static class RichTextBoxHelper
     {
         public static readonly DependencyProperty FormattedTextProperty =
-            DependencyProperty.RegisterAttached("FormattedText", typeof(string), typeof(TextBlockHelper),
-                new PropertyMetadata(string.Empty, (d, e) => RebuildInlines(d as TextBlock)));
+            DependencyProperty.RegisterAttached("FormattedText", typeof(string), typeof(RichTextBoxHelper),
+                new PropertyMetadata(string.Empty, (d, e) => RebuildDocument(d as System.Windows.Controls.RichTextBox)));
 
         public static readonly DependencyProperty FormattedTextIsEditedProperty =
-            DependencyProperty.RegisterAttached("FormattedTextIsEdited", typeof(bool), typeof(TextBlockHelper),
-                new PropertyMetadata(false, (d, e) => RebuildInlines(d as TextBlock)));
+            DependencyProperty.RegisterAttached("FormattedTextIsEdited", typeof(bool), typeof(RichTextBoxHelper),
+                new PropertyMetadata(false, (d, e) => RebuildDocument(d as System.Windows.Controls.RichTextBox)));
 
         public static void SetFormattedText(DependencyObject obj, string value) => obj.SetValue(FormattedTextProperty, value);
         public static string GetFormattedText(DependencyObject obj) => (string)obj.GetValue(FormattedTextProperty);
         public static void SetFormattedTextIsEdited(DependencyObject obj, bool value) => obj.SetValue(FormattedTextIsEditedProperty, value);
         public static bool GetFormattedTextIsEdited(DependencyObject obj) => (bool)obj.GetValue(FormattedTextIsEditedProperty);
 
-        private static void RebuildInlines(TextBlock? textBlock)
+        private static void RebuildDocument(System.Windows.Controls.RichTextBox? rtb)
         {
-            if (textBlock == null) return;
-            var text = (string)textBlock.GetValue(FormattedTextProperty) ?? string.Empty;
-            var isEdited = (bool)textBlock.GetValue(FormattedTextIsEditedProperty);
-            textBlock.Inlines.Clear();
+            if (rtb == null) return;
+            var text = (string)rtb.GetValue(FormattedTextProperty) ?? string.Empty;
+            var isEdited = (bool)rtb.GetValue(FormattedTextIsEditedProperty);
+
+            var doc = new System.Windows.Documents.FlowDocument
+            {
+                PagePadding = new Thickness(0),
+                Background = Brushes.Transparent
+            };
+            
+            var p = new System.Windows.Documents.Paragraph { Margin = new Thickness(0) };
 
             if (!string.IsNullOrEmpty(text))
             {
-                var parts = System.Text.RegularExpressions.Regex.Split(text, @"(@[a-zA-Z0-9_\-]+)");
+                var regex = new System.Text.RegularExpressions.Regex(@"(@[a-zA-Z0-9_\-]+)|(https?:\/\/[^\s]+)");
+                var parts = regex.Split(text);
                 foreach (var part in parts)
                 {
                     if (string.IsNullOrEmpty(part)) continue;
                     if (part.StartsWith("@") && part.Length > 1)
-                        textBlock.Inlines.Add(new System.Windows.Documents.Run(part)
+                    {
+                        p.Inlines.Add(new System.Windows.Documents.Run(part)
                         {
                             Foreground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#E3B341")),
                             FontWeight = FontWeights.Bold
                         });
+                    }
+                    else if (part.StartsWith("http://") || part.StartsWith("https://"))
+                    {
+                        var hl = new System.Windows.Documents.Hyperlink(new System.Windows.Documents.Run(part))
+                        {
+                            NavigateUri = new Uri(part),
+                            Foreground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#58A6FF")),
+                            TextDecorations = TextDecorations.Underline
+                        };
+                        hl.RequestNavigate += (s, e) =>
+                        {
+                            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true }); } catch { }
+                            e.Handled = true;
+                        };
+                        p.Inlines.Add(hl);
+                    }
                     else
-                        textBlock.Inlines.Add(new System.Windows.Documents.Run(part));
+                    {
+                        p.Inlines.Add(new System.Windows.Documents.Run(part));
+                    }
                 }
             }
 
             if (isEdited)
-                textBlock.Inlines.Add(new System.Windows.Documents.Run(" (edited)")
+            {
+                p.Inlines.Add(new System.Windows.Documents.Run(" (edited)")
                 {
                     Foreground = new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#6E7681")),
                     FontStyle = FontStyles.Italic,
                     FontSize = 11
                 });
+            }
+            
+            doc.Blocks.Add(p);
+            rtb.Document = doc;
         }
     }
 
@@ -3515,5 +4099,27 @@ namespace DevTavern.Client
         public event PropertyChangedEventHandler? PropertyChanged;
         private void OnPropertyChanged([CallerMemberName] string? p = null)
             => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(p));
+    }
+
+    public class ActivityItem : INotifyPropertyChanged
+    {
+        private string _icon = "";
+        public string Icon { get => _icon; set { _icon = value; OnPropertyChanged(); } }
+
+        private string _actionTitle = "";
+        public string ActionTitle { get => _actionTitle; set { _actionTitle = value; OnPropertyChanged(); } }
+
+        private string _projectName = "";
+        public string ProjectName { get => _projectName; set { _projectName = value; OnPropertyChanged(); } }
+
+        private string _actionDetails = "";
+        public string ActionDetails { get => _actionDetails; set { _actionDetails = value; OnPropertyChanged(); } }
+
+        private string _timeAgo = "";
+        public string TimeAgo { get => _timeAgo; set { _timeAgo = value; OnPropertyChanged(); } }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? propName = null)
+            => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
     }
 }

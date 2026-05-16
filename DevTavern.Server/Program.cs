@@ -13,7 +13,10 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddHttpClient();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+{
+    options.MaximumReceiveMessageSize = 5 * 1024 * 1024; // 5 MB
+});
 
 // CORS - permite frontend-ului sa acceseze API-ul
 builder.Services.AddCors(options =>
