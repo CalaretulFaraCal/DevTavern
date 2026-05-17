@@ -12,6 +12,8 @@ using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 using System.IO;
 using System.Linq;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace DevTavern.Client
 {
@@ -322,6 +324,38 @@ namespace DevTavern.Client
         {
             get => _hasUnreadMessages;
             set { _hasUnreadMessages = value; OnPropertyChanged(); }
+        }
+
+        private string? _customImagePath;
+        public string? CustomImagePath
+        {
+            get => _customImagePath;
+            set
+            {
+                _customImagePath = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasCustomImage));
+                OnPropertyChanged(nameof(CustomImageSource));
+            }
+        }
+        public bool HasCustomImage => !string.IsNullOrEmpty(_customImagePath) && File.Exists(_customImagePath);
+        public ImageSource? CustomImageSource
+        {
+            get
+            {
+                if (!HasCustomImage) return null;
+                try
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.UriSource = new Uri(_customImagePath!);
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+                    bmp.EndInit();
+                    return bmp;
+                }
+                catch { return null; }
+            }
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

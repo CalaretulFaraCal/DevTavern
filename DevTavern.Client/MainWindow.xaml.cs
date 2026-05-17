@@ -68,6 +68,19 @@ namespace DevTavern.Client
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevTavern", "voice_settings.json");
         private static readonly string _soundSettingsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevTavern", "sound_settings.json");
+        private static readonly string _serverIconsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DevTavern", "server_icons.json");
+        private RepoItem? _settingsTargetProject = null;
+
+        // Crop overlay state
+        private const double CropViewportSize = 360.0;
+        private const double CropCircleRadius  = 150.0;
+        private BitmapImage? _cropBitmap;
+        private double _cropOrigWidth, _cropOrigHeight;
+        private double _cropScale;
+        private double _cropTx, _cropTy;
+        private Point  _cropLastMouse;
+        private bool   _cropIsDragging = false;
         private AppSoundSettings _soundSettings = new();
 
         public static readonly string[] KeybindActions = { "Push to Mute", "Push to Deafen", "Toggle Mute", "Toggle Deafen" };
@@ -184,6 +197,12 @@ namespace DevTavern.Client
         public async Task InitializeAsync()
         {
             _fullNameCache[_username] = _displayName;
+
+            // Load custom server icons from local storage
+            var savedIcons = LoadServerIcons();
+            foreach (var p in _projects)
+                if (savedIcons.TryGetValue(p.id, out var iconPath))
+                    p.CustomImagePath = iconPath;
 
             // ---- SignalR Init ----
             _hubConnection = new HubConnectionBuilder()
@@ -705,6 +724,31 @@ namespace DevTavern.Client
             catch { }
         }
 
+        private Dictionary<string, string> LoadServerIcons()
+        {
+            try
+            {
+                if (File.Exists(_serverIconsPath))
+                    return JsonConvert.DeserializeObject<Dictionary<string, string>>(File.ReadAllText(_serverIconsPath)) ?? new();
+            }
+            catch { }
+            return new();
+        }
+
+        private void SaveServerIcons()
+        {
+            try
+            {
+                var icons = new Dictionary<string, string>();
+                foreach (var p in _projects)
+                    if (!string.IsNullOrEmpty(p.CustomImagePath))
+                        icons[p.id] = p.CustomImagePath;
+                Directory.CreateDirectory(Path.GetDirectoryName(_serverIconsPath)!);
+                File.WriteAllText(_serverIconsPath, JsonConvert.SerializeObject(icons));
+            }
+            catch { }
+        }
+
         private string GenerateIconLetters(string name)
         {
             if (string.IsNullOrEmpty(name)) return "?";
@@ -721,8 +765,24 @@ namespace DevTavern.Client
                 : name.ToUpper();
         }
 
+        private bool IsDragSelection()
+        {
+            if (!_listboxButtonHeld) return false;
+            var pos = Mouse.GetPosition(this);
+            return Math.Abs(pos.X - _listboxDownPos.X) > 2 || Math.Abs(pos.Y - _listboxDownPos.Y) > 2;
+        }
+
+        private void CancelDragSelection(ListBox listBox, SelectionChangedEventArgs e)
+        {
+            _restoringSelection = true;
+            listBox.SelectedItem = e.RemovedItems.Count > 0 ? e.RemovedItems[0] : null;
+            _restoringSelection = false;
+        }
+
         private async void ProjectList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (_restoringSelection) return;
+            if (IsDragSelection()) { CancelDragSelection(ProjectList, e); return; }
             MiniProfilePanel.Visibility = Visibility.Collapsed;
             if (ProjectList.SelectedItem is RepoItem selected)
             {
@@ -1187,6 +1247,49 @@ namespace DevTavern.Client
         }
 
         // Bubble scroll events from ListBox up to the parent ScrollViewer
+        // Prevent drag-selection on ListBoxes.
+        // WPF fires synthetic PreviewMouseLeftButtonDown on items entered while button is held,
+        // AND does drag-selection in ListBox.OnMouseMove — both need to be blocked.
+        private Point _listboxDownPos;
+        private bool  _listboxDragging = false;
+        private bool  _listboxButtonHeld = false;
+        private bool  _restoringSelection = false;
+
+        private void ListBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (_listboxButtonHeld)
+            {
+                // Synthetic button-down fired because mouse entered a new item while button is held.
+                // This fires BEFORE PreviewMouseMove, so _listboxDragging would still be false here —
+                // using _listboxButtonHeld instead catches it reliably.
+                _listboxDragging = true;
+                e.Handled = true;
+                return;
+            }
+            _listboxDownPos = e.GetPosition(this);
+            _listboxButtonHeld = true;
+            _listboxDragging = false;
+        }
+
+        private void ListBox_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed) { _listboxDragging = false; _listboxButtonHeld = false; return; }
+            if (!_listboxDragging)
+            {
+                var pos = e.GetPosition(this);
+                if (Math.Abs(pos.X - _listboxDownPos.X) > 2 ||
+                    Math.Abs(pos.Y - _listboxDownPos.Y) > 2)
+                    _listboxDragging = true;
+            }
+            if (_listboxDragging) e.Handled = true;
+        }
+
+        private void ListBox_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            _listboxDragging = false;
+            _listboxButtonHeld = false;
+        }
+
         private void ChannelList_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
         {
             if (!e.Handled)
@@ -1209,6 +1312,8 @@ namespace DevTavern.Client
 
         private async void ChannelList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (_restoringSelection) return;
+            if (IsDragSelection()) { CancelDragSelection(ChannelList, e); return; }
             if (ChannelList.SelectedItem is ChannelItem selectedChannel && _selectedProject != null)
             {
                 // Save draft for the old channel
@@ -1374,6 +1479,8 @@ namespace DevTavern.Client
 
         private async void VoiceChannelList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (_restoringSelection) return;
+            if (IsDragSelection()) { CancelDragSelection(VoiceChannelList, e); return; }
             if (_selectedProject == null) return;
             if (VoiceChannelList.SelectedItem is not ChannelItem selected) return;
             VoiceChannelList.SelectedIndex = -1;
@@ -1521,6 +1628,12 @@ namespace DevTavern.Client
 
         private async void LeaveCurrentVoiceChannel()
         {
+            // UI reset trebuie sa fie sincron (inainte de orice await), altfel un join concurent
+            // seteaza bara Visible si dupa await o suprascrie cu Collapsed.
+            VoiceConnectedBar.Visibility = Visibility.Collapsed;
+            ResetMuteDeafen();
+            StopAudioCaptureAndPlayback();
+
             if (_currentVoiceChannel != null)
             {
                 // Captura referintele inainte de await ca sa nu fie suprascrise de un join concurent
@@ -1529,22 +1642,17 @@ namespace DevTavern.Client
                 _currentVoiceChannel = null;
                 _currentVoiceGroupKey = null;
 
-                // Redam sunetul INSTANT
                 PlaySound("iesire_voice.wav", _soundSettings.LeaveVoice);
+
+                leavingChannel.IsJoined = false;
+                var selfMember = leavingChannel.VoiceMembers.FirstOrDefault(m => m.Username == _username);
+                if (selfMember != null) leavingChannel.VoiceMembers.Remove(selfMember);
 
                 if (_hubConnection != null && _hubConnection.State == HubConnectionState.Connected && leavingKey != null)
                 {
                     try { await _hubConnection.InvokeAsync("LeaveVoiceChannel", leavingKey, _username); } catch { }
                 }
-
-                leavingChannel.IsJoined = false;
-                var selfMember = leavingChannel.VoiceMembers.FirstOrDefault(m => m.Username == _username);
-                if (selfMember != null) leavingChannel.VoiceMembers.Remove(selfMember);
             }
-            VoiceConnectedBar.Visibility = Visibility.Collapsed;
-            ResetMuteDeafen();
-
-            StopAudioCaptureAndPlayback();
         }
 
         private void StopAudioCaptureAndPlayback()
@@ -2421,9 +2529,22 @@ namespace DevTavern.Client
             if (dlg.ShowDialog() == true)
             {
                 _attachedImagePath = dlg.FileName;
-                var fileName = System.IO.Path.GetFileName(_attachedImagePath);
-                MessageInput.Text += $"[Attached Image: {fileName}]";
+                var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                bmp.BeginInit();
+                bmp.UriSource = new Uri(_attachedImagePath);
+                bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                bmp.DecodePixelWidth = 160;
+                bmp.EndInit();
+                AttachedImageThumbnail.Source = bmp;
+                AttachedImagePreviewBar.Visibility = Visibility.Visible;
             }
+        }
+
+        private void RemoveAttachment_Click(object sender, RoutedEventArgs e)
+        {
+            _attachedImagePath = null;
+            AttachedImageThumbnail.Source = null;
+            AttachedImagePreviewBar.Visibility = Visibility.Collapsed;
         }
 
         private string CompressImageToBase64(string imagePath, int maxWidth = 800)
@@ -2457,14 +2578,10 @@ namespace DevTavern.Client
             {
                 string base64 = CompressImageToBase64(_attachedImagePath);
                 if (!string.IsNullOrEmpty(base64))
-                {
-                    string placeholder = $"[Attached Image: {System.IO.Path.GetFileName(_attachedImagePath)}]";
-                    if (finalContent.Contains(placeholder))
-                        finalContent = finalContent.Replace(placeholder, "").Trim();
-
-                    finalContent += $"\n[IMAGE:{base64}]";
-                }
+                    finalContent += (string.IsNullOrEmpty(finalContent) ? "" : "\n") + $"[IMAGE:{base64}]";
                 _attachedImagePath = null;
+                AttachedImageThumbnail.Source = null;
+                AttachedImagePreviewBar.Visibility = Visibility.Collapsed;
             }
 
             if (string.IsNullOrEmpty(finalContent) || _selectedProject == null || _selectedChannelId == 0) return;
@@ -3148,7 +3265,194 @@ namespace DevTavern.Client
 
         private void ServerSettingsButton_Click(object sender, RoutedEventArgs e)
         {
-            MessageBox.Show("Server Settings will be available in a future update.\nFor now, you can right click on any member to assign roles.", "Server Settings", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (_selectedProject == null) return;
+            _settingsTargetProject = _projects.FirstOrDefault(p => p.name == _selectedProject);
+            if (_settingsTargetProject == null) return;
+
+            ServerSettingsProjectName.Text = _settingsTargetProject.name;
+            ServerSettingsIconInitials.Text = _settingsTargetProject.IconLetters;
+
+            if (_settingsTargetProject.HasCustomImage && _settingsTargetProject.CustomImageSource != null)
+            {
+                ServerSettingsIconBrush.ImageSource = _settingsTargetProject.CustomImageSource;
+                ServerSettingsIconImageEllipse.Visibility = Visibility.Visible;
+                ServerSettingsRemoveBtn.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                ServerSettingsIconBrush.ImageSource = null;
+                ServerSettingsIconImageEllipse.Visibility = Visibility.Collapsed;
+                ServerSettingsRemoveBtn.Visibility = Visibility.Collapsed;
+            }
+
+            ServerSettingsOverlay.Visibility = Visibility.Visible;
+        }
+
+        private void ServerSettingsOverlay_BackdropClick(object sender, MouseButtonEventArgs e)
+            => ServerSettingsOverlay.Visibility = Visibility.Collapsed;
+
+        private void CloseServerSettings_Click(object sender, RoutedEventArgs e)
+            => ServerSettingsOverlay.Visibility = Visibility.Collapsed;
+
+        private void ChangeServerIcon_Click(object sender, RoutedEventArgs e)
+        {
+            var fileDlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select Server Icon",
+                Filter = "Image files (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif",
+                Multiselect = false
+            };
+            if (fileDlg.ShowDialog() != true || _settingsTargetProject == null) return;
+
+            OpenCropOverlay(fileDlg.FileName);
+        }
+
+        private void RemoveServerIcon_Click(object sender, RoutedEventArgs e)
+        {
+            if (_settingsTargetProject == null) return;
+            _settingsTargetProject.CustomImagePath = null;
+            SaveServerIcons();
+
+            ServerSettingsIconBrush.ImageSource = null;
+            ServerSettingsIconImageEllipse.Visibility = Visibility.Collapsed;
+            ServerSettingsRemoveBtn.Visibility = Visibility.Collapsed;
+        }
+
+        // ========== Crop Image Overlay ==========
+
+        private void OpenCropOverlay(string filePath)
+        {
+            _cropBitmap = new BitmapImage();
+            _cropBitmap.BeginInit();
+            _cropBitmap.UriSource = new Uri(filePath);
+            _cropBitmap.CacheOption = BitmapCacheOption.OnLoad;
+            _cropBitmap.EndInit();
+
+            CropImageElement.Source = _cropBitmap;
+            _cropOrigWidth  = _cropBitmap.PixelWidth;
+            _cropOrigHeight = _cropBitmap.PixelHeight;
+
+            double minDim = Math.Min(_cropOrigWidth, _cropOrigHeight);
+            _cropScale = (CropCircleRadius * 2.0) / minDim;
+            _cropTx = 0;
+            _cropTy = 0;
+
+            UpdateCropTransform();
+            CropImageOverlay.Visibility = Visibility.Visible;
+        }
+
+        private void UpdateCropTransform()
+        {
+            double imgW = _cropOrigWidth  * _cropScale;
+            double imgH = _cropOrigHeight * _cropScale;
+            System.Windows.Controls.Canvas.SetLeft(CropImageElement, (CropViewportSize - imgW) / 2.0 + _cropTx);
+            System.Windows.Controls.Canvas.SetTop(CropImageElement,  (CropViewportSize - imgH) / 2.0 + _cropTy);
+            CropImageElement.Width  = imgW;
+            CropImageElement.Height = imgH;
+        }
+
+        private void ClampCropTranslation()
+        {
+            double imgW = _cropOrigWidth  * _cropScale;
+            double imgH = _cropOrigHeight * _cropScale;
+            double imgL = (CropViewportSize - imgW) / 2 + _cropTx;
+            double imgT = (CropViewportSize - imgH) / 2 + _cropTy;
+
+            double cropL = CropViewportSize / 2 - CropCircleRadius;
+            double cropR = CropViewportSize / 2 + CropCircleRadius;
+            double cropT = CropViewportSize / 2 - CropCircleRadius;
+            double cropB = CropViewportSize / 2 + CropCircleRadius;
+
+            if (imgL > cropL) _cropTx -= imgL - cropL;
+            if (imgL + imgW < cropR) _cropTx += cropR - (imgL + imgW);
+            if (imgT > cropT) _cropTy -= imgT - cropT;
+            if (imgT + imgH < cropB) _cropTy += cropB - (imgT + imgH);
+        }
+
+        private void CropViewport_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.LeftButton != MouseButtonState.Pressed) return;
+            _cropIsDragging = true;
+            _cropLastMouse  = e.GetPosition(CropViewportBorder);
+            CropViewportBorder.CaptureMouse();
+            e.Handled = true;
+        }
+
+        private void CropViewport_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_cropIsDragging) return;
+            Point pos = e.GetPosition(CropViewportBorder);
+            _cropTx += pos.X - _cropLastMouse.X;
+            _cropTy += pos.Y - _cropLastMouse.Y;
+            _cropLastMouse = pos;
+            ClampCropTranslation();
+            UpdateCropTransform();
+        }
+
+        private void CropViewport_MouseUp(object sender, MouseButtonEventArgs e)
+        {
+            _cropIsDragging = false;
+            CropViewportBorder.ReleaseMouseCapture();
+        }
+
+        private void CropViewport_MouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            double factor = e.Delta > 0 ? 1.1 : 1.0 / 1.1;
+            double minDim   = Math.Min(_cropOrigWidth, _cropOrigHeight);
+            double minScale = (CropCircleRadius * 2.0) / minDim;
+            _cropScale = Math.Clamp(_cropScale * factor, minScale, minScale * 15.0);
+            ClampCropTranslation();
+            UpdateCropTransform();
+        }
+
+        private void CropOverlay_BackdropClick(object sender, MouseButtonEventArgs e)
+            => CropImageOverlay.Visibility = Visibility.Collapsed;
+
+        private void CancelCrop_Click(object sender, RoutedEventArgs e)
+            => CropImageOverlay.Visibility = Visibility.Collapsed;
+
+        private void ApplyCrop_Click(object sender, RoutedEventArgs e)
+        {
+            if (_cropBitmap == null || _settingsTargetProject == null) return;
+
+            const int    outputSize    = 300;
+            const double cornerRadius  = 95.0; // 300 * (14/44) — matches the selected icon shape
+
+            var rtb = new RenderTargetBitmap(outputSize, outputSize, 96, 96, PixelFormats.Pbgra32);
+            var dv  = new DrawingVisual();
+            using (var dc = dv.RenderOpen())
+            {
+                dc.PushClip(new RectangleGeometry(new Rect(0, 0, outputSize, outputSize), cornerRadius, cornerRadius));
+
+                double imgW = _cropOrigWidth  * _cropScale;
+                double imgH = _cropOrigHeight * _cropScale;
+                double relLeft = (CropViewportSize - imgW) / 2.0 + _cropTx - (CropViewportSize / 2.0 - CropCircleRadius);
+                double relTop  = (CropViewportSize - imgH) / 2.0 + _cropTy - (CropViewportSize / 2.0 - CropCircleRadius);
+
+                dc.DrawImage(_cropBitmap, new Rect(relLeft, relTop, imgW, imgH));
+                dc.Pop();
+            }
+            rtb.Render(dv);
+
+            string iconsDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DevTavern", "ServerIcons");
+            Directory.CreateDirectory(iconsDir);
+            string outPath = Path.Combine(iconsDir, $"{_settingsTargetProject.id}.png");
+
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(rtb));
+            using (var stream = File.Create(outPath))
+                encoder.Save(stream);
+
+            _settingsTargetProject.CustomImagePath = outPath;
+            SaveServerIcons();
+
+            ServerSettingsIconBrush.ImageSource = _settingsTargetProject.CustomImageSource;
+            ServerSettingsIconImageEllipse.Visibility = Visibility.Visible;
+            ServerSettingsRemoveBtn.Visibility = Visibility.Visible;
+
+            CropImageOverlay.Visibility = Visibility.Collapsed;
         }
 
         private void MemberAssignRole_Click(object sender, RoutedEventArgs e)
