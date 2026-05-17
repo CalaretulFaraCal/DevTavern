@@ -338,12 +338,58 @@ namespace DevTavern.Client
                 OnPropertyChanged(nameof(CustomImageSource));
             }
         }
-        public bool HasCustomImage => !string.IsNullOrEmpty(_customImagePath) && File.Exists(_customImagePath);
+
+        private string? _serverImageUrl;
+        public string? ServerImageUrl
+        {
+            get => _serverImageUrl;
+            set
+            {
+                _serverImageUrl = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasCustomImage));
+                OnPropertyChanged(nameof(CustomImageSource));
+            }
+        }
+
+        public bool HasCustomImage =>
+            !string.IsNullOrEmpty(_serverImageUrl) ||
+            (!string.IsNullOrEmpty(_customImagePath) && File.Exists(_customImagePath));
+
         public ImageSource? CustomImageSource
         {
             get
             {
-                if (!HasCustomImage) return null;
+                if (!string.IsNullOrEmpty(_serverImageUrl))
+                {
+                    try
+                    {
+                        if (_serverImageUrl.StartsWith("data:"))
+                        {
+                            var comma = _serverImageUrl.IndexOf(',');
+                            var base64 = comma >= 0 ? _serverImageUrl.Substring(comma + 1) : _serverImageUrl;
+                            var bytes = Convert.FromBase64String(base64);
+                            var bmp = new BitmapImage();
+                            using var ms = new System.IO.MemoryStream(bytes);
+                            bmp.BeginInit();
+                            bmp.StreamSource = ms;
+                            bmp.CacheOption = BitmapCacheOption.OnLoad;
+                            bmp.EndInit();
+                            return bmp;
+                        }
+                        else
+                        {
+                            var bmp = new BitmapImage();
+                            bmp.BeginInit();
+                            bmp.UriSource = new Uri(_serverImageUrl);
+                            bmp.CacheOption = BitmapCacheOption.OnLoad;
+                            bmp.EndInit();
+                            return bmp;
+                        }
+                    }
+                    catch { }
+                }
+                if (string.IsNullOrEmpty(_customImagePath) || !File.Exists(_customImagePath)) return null;
                 try
                 {
                     var bmp = new BitmapImage();

@@ -475,6 +475,9 @@ namespace DevTavern.Client
                     {
                         var pJson = JObject.Parse(await pResp.Content.ReadAsStringAsync());
                         project.DbId = pJson["id"]?.ToObject<int>() ?? 0;
+                        var serverImageUrl = pJson["imageUrl"]?.ToString();
+                        if (!string.IsNullOrEmpty(serverImageUrl))
+                            project.ServerImageUrl = serverImageUrl;
 
                         // POST /api/channels/generate-defaults/{projectId}
                         // Serverul genereaza 2 canale default (general-tech, off-topic-lounge) sau le returneaza pe cele existente
@@ -484,6 +487,7 @@ namespace DevTavern.Client
                             var cArr = JArray.Parse(await cResp.Content.ReadAsStringAsync());
                             var textChannels = new ObservableCollection<ChannelItem>();
                             var voiceChannels = new ObservableCollection<ChannelItem>();
+                            var allItems = new List<ChannelItem>();
                             foreach (var c in cArr)
                             {
                                 int chType = 0;
@@ -499,13 +503,16 @@ namespace DevTavern.Client
                                         else if (s == "OffTopic" || s == "1") chType = 1;
                                     }
                                 }
-                                var item = new ChannelItem
+                                allItems.Add(new ChannelItem
                                 {
                                     Id = c["id"]?.ToObject<int>() ?? 0,
                                     Name = c["name"]?.ToString() ?? "",
                                     Type = chType
-                                };
-                                if (chType == 2)
+                                });
+                            }
+                            foreach (var item in allItems.OrderBy(x => x.Id))
+                            {
+                                if (item.Type == 2)
                                     voiceChannels.Add(item);
                                 else
                                     textChannels.Add(item);
@@ -2710,8 +2717,7 @@ namespace DevTavern.Client
             PermissionsTabContent.Visibility = Visibility.Visible;
         }
 
-        // Redenumeste canalul (doar local)
-        private void SaveChannelName_Click(object sender, RoutedEventArgs e)
+        private async void SaveChannelName_Click(object sender, RoutedEventArgs e)
         {
             if (_editingChannel == null) return;
 
@@ -2735,14 +2741,6 @@ namespace DevTavern.Client
                         return;
                     }
                 }
-                _editingChannel.Name = newName;
-                if (_selectedProject != null && _projectVoiceChannels.TryGetValue(_selectedProject, out var vChannels))
-                {
-                    VoiceChannelList.ItemsSource = null;
-                    VoiceChannelList.ItemsSource = vChannels;
-                }
-                if (_currentVoiceChannel?.Id == _editingChannel.Id)
-                    VoiceConnectedChannelName.Text = $"#{newName}";
             }
             else
             {
@@ -2755,12 +2753,39 @@ namespace DevTavern.Client
                         return;
                     }
                 }
-                _editingChannel.Name = newName;
-                if (_selectedProject != null && _projectChannels.TryGetValue(_selectedProject, out var ch))
+            }
+
+            // Persist to server
+            try
+            {
+                var body = new StringContent(
+                    JsonConvert.SerializeObject(new { Name = newName }),
+                    System.Text.Encoding.UTF8, "application/json");
+                var resp = await _apiClient.PutAsync($"channels/{_editingChannel.Id}/rename", body);
+                if (!resp.IsSuccessStatusCode)
                 {
-                    ChannelList.ItemsSource = null;
-                    ChannelList.ItemsSource = ch;
+                    MessageBox.Show("Failed to rename channel. Please try again.", "DevTavern",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
                 }
+            }
+            catch
+            {
+                MessageBox.Show("Could not reach the server. Please check your connection.", "DevTavern",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            // Update local state — INotifyPropertyChanged on Name updates the list in-place
+            _editingChannel.Name = newName;
+
+            if (_editingChannel.Type == 2)
+            {
+                if (_currentVoiceChannel?.Id == _editingChannel.Id)
+                    VoiceConnectedChannelName.Text = $"#{newName}";
+            }
+            else
+            {
                 if (_selectedChannelId == _editingChannel.Id)
                 {
                     ChatTitle.Text = newName;
@@ -3307,11 +3332,24 @@ namespace DevTavern.Client
             OpenCropOverlay(fileDlg.FileName);
         }
 
-        private void RemoveServerIcon_Click(object sender, RoutedEventArgs e)
+        private async void RemoveServerIcon_Click(object sender, RoutedEventArgs e)
         {
             if (_settingsTargetProject == null) return;
             _settingsTargetProject.CustomImagePath = null;
+            _settingsTargetProject.ServerImageUrl = null;
             SaveServerIcons();
+
+            if (_settingsTargetProject.DbId > 0)
+            {
+                try
+                {
+                    var body = new StringContent(
+                        JsonConvert.SerializeObject(new { ImageUrl = (string?)null }),
+                        System.Text.Encoding.UTF8, "application/json");
+                    await _apiClient.PutAsync($"projects/{_settingsTargetProject.DbId}/image", body);
+                }
+                catch { }
+            }
 
             ServerSettingsIconBrush.ImageSource = null;
             ServerSettingsIconImageEllipse.Visibility = Visibility.Collapsed;
@@ -3411,7 +3449,7 @@ namespace DevTavern.Client
         private void CancelCrop_Click(object sender, RoutedEventArgs e)
             => CropImageOverlay.Visibility = Visibility.Collapsed;
 
-        private void ApplyCrop_Click(object sender, RoutedEventArgs e)
+        private async void ApplyCrop_Click(object sender, RoutedEventArgs e)
         {
             if (_cropBitmap == null || _settingsTargetProject == null) return;
 
@@ -3434,6 +3472,7 @@ namespace DevTavern.Client
             }
             rtb.Render(dv);
 
+            // Save locally as cache
             string iconsDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DevTavern", "ServerIcons");
@@ -3447,6 +3486,24 @@ namespace DevTavern.Client
 
             _settingsTargetProject.CustomImagePath = outPath;
             SaveServerIcons();
+
+            // Upload to server as base64 data URL
+            if (_settingsTargetProject.DbId > 0)
+            {
+                try
+                {
+                    var bytes = File.ReadAllBytes(outPath);
+                    var base64 = Convert.ToBase64String(bytes);
+                    var dataUrl = $"data:image/png;base64,{base64}";
+                    var body = new StringContent(
+                        JsonConvert.SerializeObject(new { ImageUrl = dataUrl }),
+                        System.Text.Encoding.UTF8, "application/json");
+                    var resp = await _apiClient.PutAsync($"projects/{_settingsTargetProject.DbId}/image", body);
+                    if (resp.IsSuccessStatusCode)
+                        _settingsTargetProject.ServerImageUrl = dataUrl;
+                }
+                catch { }
+            }
 
             ServerSettingsIconBrush.ImageSource = _settingsTargetProject.CustomImageSource;
             ServerSettingsIconImageEllipse.Visibility = Visibility.Visible;
@@ -4131,7 +4188,14 @@ namespace DevTavern.Client
     public class ChannelItem : INotifyPropertyChanged
     {
         public int Id { get; set; }
-        public string Name { get; set; } = "";
+
+        private string _name = "";
+        public string Name
+        {
+            get => _name;
+            set { _name = value; OnPropertyChanged(); }
+        }
+
         public int Type { get; set; } = 0;
         public string VoiceGroupKey { get; set; } = "";
 
