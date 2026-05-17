@@ -130,5 +130,24 @@ namespace DevTavern.Server.Controllers
             await _context.SaveChangesAsync();
             return Ok(roleData);
         }
+
+        // PUT /api/projects/{id}/image - seteaza poza custom a proiectului
+        public class UpdateProjectImageDto
+        {
+            public string? ImageUrl { get; set; }
+        }
+
+        [HttpPut("{id}/image")]
+        public async Task<IActionResult> UpdateProjectImage(int id, [FromBody] UpdateProjectImageDto dto)
+        {
+            var project = await _projectRepository.GetByIdAsync(id);
+            if (project == null) return NotFound();
+
+            project.ImageUrl = dto.ImageUrl;
+            _projectRepository.Update(project);
+            await _context.SaveChangesAsync();
+
+            return Ok(project);
+        }
     }
 }
