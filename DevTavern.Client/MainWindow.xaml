@@ -2667,8 +2667,8 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel VerticalAlignment="Center">
-                                            <TextBlock Text="Dark / Light Mode" FontSize="13" Foreground="#C9D1D9" FontWeight="SemiBold"/>
-                                            <TextBlock x:Name="ThemeModeLabel" Text="Currently: Dark" FontSize="11" Foreground="#8B949E" Margin="0,2,0,0"/>
+                                            <TextBlock Text="Sound Pack" FontSize="13" Foreground="#C9D1D9" FontWeight="SemiBold"/>
+                                            <TextBlock x:Name="ThemeModeLabel" Text="Currently: Default" FontSize="11" Foreground="#8B949E" Margin="0,2,0,0"/>
                                         </StackPanel>
                                         <!-- Inline toggle switch -->
                                         <CheckBox x:Name="ThemeToggleCheck" Grid.Column="1"
@@ -2683,41 +2683,7 @@
                                 <TextBlock Text="Enable or disable individual sounds and adjust their volume."
                                            FontSize="12" Foreground="#6E7681" Margin="0,0,0,16" TextWrapping="Wrap"/>
 
-                                <!-- Startup sound -->
-                                <Border Background="#0D1117" CornerRadius="8" Padding="14,12" Margin="0,0,0,8">
-                                    <StackPanel>
-                                        <StackPanel Orientation="Horizontal">
-                                            <CheckBox x:Name="SoundStartupCheck" IsChecked="True"
-                                                      Content="App startup" Foreground="#C9D1D9" FontSize="13"
-                                                      Style="{StaticResource ToggleSwitchStyle}" VerticalAlignment="Center"/>
-                                            <Button Style="{StaticResource SoundPreviewButtonStyle}" Margin="8,0,0,0"
-                                                    Click="PreviewStartup_Click" VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                        <StackPanel Margin="0,10,0,0">
-                                            <StackPanel.Style>
-                                                <Style TargetType="StackPanel">
-                                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsChecked, ElementName=SoundStartupCheck}" Value="True">
-                                                            <Setter Property="Visibility" Value="Visible"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </StackPanel.Style>
-                                            <Grid Margin="0,0,0,4">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="40"/>
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Text="Volume" FontSize="11" Foreground="#8B949E" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="1" FontSize="11" Foreground="#E6EDF3" HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                           Text="{Binding Value, ElementName=SoundStartupSlider, StringFormat={}{0:F0}%}"/>
-                                            </Grid>
-                                            <Slider x:Name="SoundStartupSlider" Style="{StaticResource VoiceSlider}"
-                                                    Minimum="0" Maximum="100" Value="50"/>
-                                        </StackPanel>
-                                    </StackPanel>
-                                </Border>
+
 
                                 <!-- Join voice channel -->
                                 <Border Background="#0D1117" CornerRadius="8" Padding="14,12" Margin="0,0,0,8">

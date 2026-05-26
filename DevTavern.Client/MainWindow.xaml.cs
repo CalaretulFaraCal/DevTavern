@@ -111,12 +111,14 @@ namespace DevTavern.Client
 
         public ObservableCollection<ChatMessage> Messages { get; set; } = new ObservableCollection<ChatMessage>();
 
+        private string _soundPackFolder = "Sounds_Default";
+
         private void PlaySound(string fileName, SoundConfig? config = null)
         {
             if (config != null && !config.Enabled) return;
             try
             {
-                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", fileName);
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", _soundPackFolder, fileName);
                 if (!File.Exists(path)) return;
                 float volume = config != null ? (float)(config.Volume / 100.0) : 1.0f;
                 var reader = new AudioFileReader(path) { Volume = volume };
@@ -132,7 +134,6 @@ namespace DevTavern.Client
         {
             InitializeComponent();
             _soundSettings = LoadSoundSettings();
-            PlaySound("sunet_deschidere.wav", _soundSettings.Startup);
 
             _currentUserId = currentUserId;
             _apiClient = new HttpClient { BaseAddress = new Uri("https://devtavern.onrender.com/api/") };
@@ -1241,16 +1242,17 @@ namespace DevTavern.Client
             LogoutButton_Click(sender, e);
         }
 
-        // Theme toggle in Settings → Appearance section
+        // Sound pack toggle in Settings → Appearance section
         private void ThemeToggle_Checked(object sender, RoutedEventArgs e)
         {
-            // Light mode (placeholder - theme switching requires App.xaml resource swap)
-            if (ThemeModeLabel != null) ThemeModeLabel.Text = "Currently: Light";
+            _soundPackFolder = "Sounds_Themed";
+            if (ThemeModeLabel != null) ThemeModeLabel.Text = "Currently: Themed";
         }
 
         private void ThemeToggle_Unchecked(object sender, RoutedEventArgs e)
         {
-            if (ThemeModeLabel != null) ThemeModeLabel.Text = "Currently: Dark";
+            _soundPackFolder = "Sounds_Default";
+            if (ThemeModeLabel != null) ThemeModeLabel.Text = "Currently: Default";
         }
 
         // Bubble scroll events from ListBox up to the parent ScrollViewer
@@ -1693,8 +1695,8 @@ namespace DevTavern.Client
         private async Task ExecuteToggleMuteAsync()
         {
             _isMuted = !_isMuted;
-            if (_isMuted) PlaySound("zavor_inchis.wav", _soundSettings.Mute);
-            else PlaySound("zavor_deschis.wav", _soundSettings.Unmute);
+            if (_isMuted) PlaySound("mute.wav", _soundSettings.Mute);
+            else PlaySound("unmute.wav", _soundSettings.Unmute);
             MuteIcon.Fill = new SolidColorBrush(_isMuted
                 ? Color.FromRgb(0xDA, 0x36, 0x33) : Color.FromRgb(0x8B, 0x94, 0x9E));
             var me = _currentVoiceChannel?.VoiceMembers.FirstOrDefault(m => m.Username == _username);
@@ -1706,8 +1708,8 @@ namespace DevTavern.Client
         private async Task ExecuteToggleDeafenAsync()
         {
             _isDeafened = !_isDeafened;
-            if (_isDeafened) PlaySound("zavor_inchis.wav", _soundSettings.Deafen);
-            else PlaySound("zavor_deschis.wav", _soundSettings.Undeafen);
+            if (_isDeafened) PlaySound("mute.wav", _soundSettings.Deafen);
+            else PlaySound("unmute.wav", _soundSettings.Undeafen);
             DeafenIcon.Fill = new SolidColorBrush(_isDeafened
                 ? Color.FromRgb(0xDA, 0x36, 0x33) : Color.FromRgb(0x8B, 0x94, 0x9E));
             var me = _currentVoiceChannel?.VoiceMembers.FirstOrDefault(m => m.Username == _username);
@@ -1888,8 +1890,7 @@ namespace DevTavern.Client
 
         private void LoadSoundSettingsToUI()
         {
-            SoundStartupCheck.IsChecked = _soundSettings.Startup.Enabled;
-            SoundStartupSlider.Value = _soundSettings.Startup.Volume;
+
             SoundJoinVoiceCheck.IsChecked = _soundSettings.JoinVoice.Enabled;
             SoundJoinVoiceSlider.Value = _soundSettings.JoinVoice.Volume;
             SoundLeaveVoiceCheck.IsChecked = _soundSettings.LeaveVoice.Enabled;
@@ -1910,8 +1911,7 @@ namespace DevTavern.Client
 
         private void SaveSoundSettingsFromUI()
         {
-            _soundSettings.Startup.Enabled = SoundStartupCheck.IsChecked == true;
-            _soundSettings.Startup.Volume = SoundStartupSlider.Value;
+
             _soundSettings.JoinVoice.Enabled = SoundJoinVoiceCheck.IsChecked == true;
             _soundSettings.JoinVoice.Volume = SoundJoinVoiceSlider.Value;
             _soundSettings.LeaveVoice.Enabled = SoundLeaveVoiceCheck.IsChecked == true;
@@ -2027,8 +2027,7 @@ namespace DevTavern.Client
             catch { }
         }
 
-        private void PreviewStartup_Click(object sender, RoutedEventArgs e)
-            => PlaySound("sunet_deschidere.wav", new SoundConfig { Enabled = true, Volume = SoundStartupSlider.Value });
+
 
         private void PreviewJoinVoice_Click(object sender, RoutedEventArgs e)
             => PlaySound("intrare_voice.wav", new SoundConfig { Enabled = true, Volume = SoundJoinVoiceSlider.Value });
@@ -2037,16 +2036,16 @@ namespace DevTavern.Client
             => PlaySound("iesire_voice.wav", new SoundConfig { Enabled = true, Volume = SoundLeaveVoiceSlider.Value });
 
         private void PreviewMute_Click(object sender, RoutedEventArgs e)
-            => PlaySound("zavor_inchis.wav", new SoundConfig { Enabled = true, Volume = SoundMuteSlider.Value });
+            => PlaySound("mute.wav", new SoundConfig { Enabled = true, Volume = SoundMuteSlider.Value });
 
         private void PreviewUnmute_Click(object sender, RoutedEventArgs e)
-            => PlaySound("zavor_deschis.wav", new SoundConfig { Enabled = true, Volume = SoundUnmuteSlider.Value });
+            => PlaySound("unmute.wav", new SoundConfig { Enabled = true, Volume = SoundUnmuteSlider.Value });
 
         private void PreviewDeafen_Click(object sender, RoutedEventArgs e)
-            => PlaySound("zavor_inchis.wav", new SoundConfig { Enabled = true, Volume = SoundDeafenSlider.Value });
+            => PlaySound("mute.wav", new SoundConfig { Enabled = true, Volume = SoundDeafenSlider.Value });
 
         private void PreviewUndeafen_Click(object sender, RoutedEventArgs e)
-            => PlaySound("zavor_deschis.wav", new SoundConfig { Enabled = true, Volume = SoundUndeafenSlider.Value });
+            => PlaySound("unmute.wav", new SoundConfig { Enabled = true, Volume = SoundUndeafenSlider.Value });
 
         private void PreviewMessage_Click(object sender, RoutedEventArgs e)
             => PlaySound("mesaje.wav", new SoundConfig { Enabled = true, Volume = SoundMessageSlider.Value });
