@@ -13,6 +13,8 @@ namespace DevTavern.Server.Models
         [Required]
         public string Name { get; set; } = string.Empty;
 
+        public string? ImageUrl { get; set; }
+
         public ICollection<Channel> Channels { get; set; } = new List<Channel>();
         public ICollection<User> Members { get; set; } = new List<User>();
     }

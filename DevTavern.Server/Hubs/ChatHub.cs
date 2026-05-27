@@ -7,92 +7,157 @@ using System.Threading.Tasks;
 
 namespace DevTavern.Server.Hubs
 {
-    // SignalR Hub - comunicare in timp real intre utilizatori
     public class ChatHub : Hub
     {
-        // Thread-safe dictionary for connection tracking (ConnectionId -> (ProjectId, Username))
-        private static readonly ConcurrentDictionary<string, (string ProjectId, string Username)> _userConnections = new();
+        private static readonly ConcurrentDictionary<string, string> _userConnections = new();
 
-        // Alatura utilizatorul unui grup specific (Canalul selectat)
-        public async Task JoinChannel(string channelId)
+        // channelKey -> set of usernames
+        private static readonly ConcurrentDictionary<string, HashSet<string>> _voiceChannelMembers = new();
+        // ConnectionId -> (channelKey, username)
+        private static readonly ConcurrentDictionary<string, (string channelKey, string username)> _connectionVoiceChannel = new();
+        // "channelKey|username" -> (isMuted, isDeafened)
+        private static readonly ConcurrentDictionary<string, (bool isMuted, bool isDeafened)> _voiceStates = new();
+
+        // channelKey = "{projectId}_{channelName}", deci projectId-ul se poate extrage
+        private static string ProjectIdFromKey(string channelKey)
+            => channelKey.Contains('_') ? channelKey[..channelKey.IndexOf('_')] : channelKey;
+
+        public async Task<List<string>> GoOnline(string username)
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, $"Channel_{channelId}");
-        }
-
-        public async Task LeaveChannel(string channelId)
-        {
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Channel_{channelId}");
-        }
-
-        // ==========================================================
-        // PROIECTE: Notificari, Prezenta Online si Roluri
-        // ==========================================================
-
-        public async Task<List<string>> JoinProject(string projectId, string username)
-        {
-            await Groups.AddToGroupAsync(Context.ConnectionId, $"Project_{projectId}");
-            _userConnections[Context.ConnectionId] = (projectId, username);
-
-            // Anuntam restul proiectului ca acest utilizator a intrat (e online)
-            await Clients.GroupExcept($"Project_{projectId}", Context.ConnectionId).SendAsync("UserJoinedProject", username);
-
-            // Returnam lista cu numele utilizatorilor care sunt DEJA online in acest proiect
-            var onlineUsers = _userConnections.Values
-                .Where(v => v.ProjectId == projectId)
-                .Select(v => v.Username)
-                .Distinct()
-                .ToList();
-
-            return onlineUsers;
-        }
-
-        public async Task LeaveProject(string projectId)
-        {
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Project_{projectId}");
-            
-            if (_userConnections.TryRemove(Context.ConnectionId, out var data))
-            {
-                // Daca nu mai are alte conexiuni in acelasi proiect (poate are 2 taburi), dam offline
-                bool stillOnline = _userConnections.Values.Any(v => v.ProjectId == projectId && v.Username == data.Username);
-                if (!stillOnline)
-                {
-                    await Clients.Group($"Project_{projectId}").SendAsync("UserLeftProject", data.Username);
-                }
-            }
+            _userConnections[Context.ConnectionId] = username;
+            await Clients.All.SendAsync("UserWentOnline", username);
+            return _userConnections.Values.Distinct().ToList();
         }
 
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
-            if (_userConnections.TryRemove(Context.ConnectionId, out var data))
+            if (_userConnections.TryRemove(Context.ConnectionId, out var username))
             {
-                bool stillOnline = _userConnections.Values.Any(v => v.ProjectId == data.ProjectId && v.Username == data.Username);
+                bool stillOnline = _userConnections.Values.Contains(username);
                 if (!stillOnline)
-                {
-                    await Clients.Group($"Project_{data.ProjectId}").SendAsync("UserLeftProject", data.Username);
-                }
+                    await Clients.All.SendAsync("UserWentOffline", username);
             }
+
+            if (_connectionVoiceChannel.TryRemove(Context.ConnectionId, out var voiceInfo))
+            {
+                if (_voiceChannelMembers.TryGetValue(voiceInfo.channelKey, out var members))
+                    lock (members) { members.Remove(voiceInfo.username); }
+
+                _voiceStates.TryRemove($"{voiceInfo.channelKey}|{voiceInfo.username}", out _);
+
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"VoiceChannel_{voiceInfo.channelKey}");
+
+                var projectId = ProjectIdFromKey(voiceInfo.channelKey);
+                await Clients.Group($"Project_{projectId}").SendAsync("UserLeftVoice", voiceInfo.channelKey, voiceInfo.username);
+            }
+
             await base.OnDisconnectedAsync(exception);
         }
 
+        public async Task JoinChannel(string channelId)
+            => await Groups.AddToGroupAsync(Context.ConnectionId, $"Channel_{channelId}");
+
+        public async Task LeaveChannel(string channelId)
+            => await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Channel_{channelId}");
+
+        public async Task JoinProject(string projectId)
+            => await Groups.AddToGroupAsync(Context.ConnectionId, $"Project_{projectId}");
+
+        public async Task LeaveProject(string projectId)
+            => await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"Project_{projectId}");
+
         public async Task NotifyRolesChanged(string projectId, string username, string newRolesCsv)
-        {
-            await Clients.Group($"Project_{projectId}").SendAsync("RolesChanged", username, newRolesCsv);
-        }
+            => await Clients.Group($"Project_{projectId}").SendAsync("RolesChanged", username, newRolesCsv);
 
         public async Task NotifyChannelCreated(string projectId, int channelId, string channelName)
-        {
-            await Clients.Group($"Project_{projectId}").SendAsync("ChannelCreated", channelId, channelName);
-        }
+            => await Clients.Group($"Project_{projectId}").SendAsync("ChannelCreated", channelId, channelName);
 
         public async Task NotifyChannelDeleted(string projectId, int channelId)
-        {
-            await Clients.Group($"Project_{projectId}").SendAsync("ChannelDeleted", channelId);
-        }
+            => await Clients.Group($"Project_{projectId}").SendAsync("ChannelDeleted", channelId);
 
-        // Trimite un mesaj live doar catre utilizatorii care sunt in acelasi grup (Canal)
         public async Task SendLiveMessage(string channelId, string username, string avatarUrl, string messageContent)
         {
             await Clients.Group($"Channel_{channelId}").SendAsync("ReceiveMessage", username, avatarUrl, messageContent);
+        }
+
+        public async Task EditMessageBroadcast(string channelId, int messageId, string newContent)
+        {
+            await Clients.Group($"Channel_{channelId}").SendAsync("MessageEdited", messageId, newContent);
+        }
+
+        public async Task DeleteMessageBroadcast(string channelId, int messageId)
+        {
+            await Clients.Group($"Channel_{channelId}").SendAsync("MessageDeleted", messageId);
+        }
+
+        // ================= Voice Chat (Walkie-Talkie) =================
+
+        public async Task JoinVoiceChannel(string channelKey, string username)
+        {
+            var members = _voiceChannelMembers.GetOrAdd(channelKey, _ => new HashSet<string>());
+
+            List<string> existing;
+            lock (members)
+            {
+                existing = members.ToList();
+                members.Add(username);
+            }
+
+            _connectionVoiceChannel[Context.ConnectionId] = (channelKey, username);
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"VoiceChannel_{channelKey}");
+
+            var projectId = ProjectIdFromKey(channelKey);
+
+            // Trimite celui care intra cate un UserJoinedVoice + VoiceStateChanged pentru fiecare user deja prezent
+            foreach (var existingUser in existing)
+            {
+                await Clients.Caller.SendAsync("UserJoinedVoice", channelKey, existingUser);
+                if (_voiceStates.TryGetValue($"{channelKey}|{existingUser}", out var state) && (state.isMuted || state.isDeafened))
+                    await Clients.Caller.SendAsync("VoiceStateChanged", channelKey, existingUser, state.isMuted, state.isDeafened);
+            }
+
+            // Anunta tot proiectul ca a intrat un nou user
+            await Clients.Group($"Project_{projectId}").SendAsync("UserJoinedVoice", channelKey, username);
+        }
+
+        public async Task LeaveVoiceChannel(string channelKey, string username)
+        {
+            if (_voiceChannelMembers.TryGetValue(channelKey, out var members))
+                lock (members) { members.Remove(username); }
+
+            _voiceStates.TryRemove($"{channelKey}|{username}", out _);
+            _connectionVoiceChannel.TryRemove(Context.ConnectionId, out _);
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"VoiceChannel_{channelKey}");
+
+            var projectId = ProjectIdFromKey(channelKey);
+            await Clients.Group($"Project_{projectId}").SendAsync("UserLeftVoice", channelKey, username);
+        }
+
+        public async Task BroadcastVoiceState(string channelKey, string username, bool isMuted, bool isDeafened)
+        {
+            _voiceStates[$"{channelKey}|{username}"] = (isMuted, isDeafened);
+            var projectId = ProjectIdFromKey(channelKey);
+            await Clients.Group($"Project_{projectId}").SendAsync("VoiceStateChanged", channelKey, username, isMuted, isDeafened);
+        }
+
+        public async Task SendAudioBuffer(string channelKey, string username, byte[] audioData)
+            => await Clients.GroupExcept($"VoiceChannel_{channelKey}", Context.ConnectionId).SendAsync("ReceiveAudioBuffer", username, audioData);
+
+        // Trimite caller-ului cate un UserJoinedVoice + VoiceStateChanged pentru fiecare user deja conectat in canalele de voce ale proiectului
+        public async Task RequestProjectVoiceSnapshot(string projectId)
+        {
+            foreach (var kvp in _voiceChannelMembers)
+            {
+                if (!kvp.Key.StartsWith(projectId + "_")) continue;
+                List<string> snapshot;
+                lock (kvp.Value) { snapshot = kvp.Value.ToList(); }
+                foreach (var u in snapshot)
+                {
+                    await Clients.Caller.SendAsync("UserJoinedVoice", kvp.Key, u);
+                    if (_voiceStates.TryGetValue($"{kvp.Key}|{u}", out var state) && (state.isMuted || state.isDeafened))
+                        await Clients.Caller.SendAsync("VoiceStateChanged", kvp.Key, u, state.isMuted, state.isDeafened);
+                }
+            }
         }
     }
 }

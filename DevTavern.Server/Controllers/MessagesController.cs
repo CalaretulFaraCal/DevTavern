@@ -28,10 +28,19 @@ namespace DevTavern.Server.Controllers
         public async Task<ActionResult<IEnumerable<Message>>> GetMessagesForChannel(int channelId)
         {
             var channelMessages = await _context.Messages
+                .AsNoTracking()
                 .Include(m => m.User)
                 .Where(m => m.ChannelId == channelId)
                 .OrderBy(m => m.SentAt)
                 .ToListAsync();
+
+            foreach (var message in channelMessages)
+            {
+                if (message.IsDeleted)
+                {
+                    message.Content = "[Acest mesaj a fost sters]";
+                }
+            }
 
             return Ok(channelMessages);
         }
@@ -50,6 +59,48 @@ namespace DevTavern.Server.Controllers
             await _messageRepository.AddAsync(newMessage);
 
             return Ok(newMessage);
+        }
+
+        public class EditMessageDto
+        {
+            public string Content { get; set; } = string.Empty;
+        }
+
+        // PUT /api/messages/{id} - edit a message
+        [HttpPut("{id}")]
+        public async Task<IActionResult> EditMessage(int id, [FromBody] EditMessageDto request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Content)) return BadRequest("Mesajul nu poate fi gol.");
+
+            var message = await _messageRepository.GetByIdAsync(id);
+            if (message == null) return NotFound();
+
+            if (message.IsDeleted) return BadRequest("Mesajul a fost sters.");
+
+            message.Content = request.Content;
+            message.IsEdited = true;
+
+            _messageRepository.Update(message);
+            await _messageRepository.SaveChangesAsync();
+
+            return NoContent();
+        }
+
+        // DELETE /api/messages/{id} - soft delete a message
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteMessage(int id)
+        {
+            var message = await _messageRepository.GetByIdAsync(id);
+            if (message == null) return NotFound();
+
+            if (message.IsDeleted) return BadRequest("Mesajul a fost deja sters.");
+
+            message.IsDeleted = true;
+
+            _messageRepository.Update(message);
+            await _messageRepository.SaveChangesAsync();
+
+            return NoContent();
         }
     }
 }

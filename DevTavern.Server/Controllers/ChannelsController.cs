@@ -102,5 +102,28 @@ namespace DevTavern.Server.Controllers
             await _channelRepository.SaveChangesAsync();
             return NoContent();
         }
+
+        // PUT /api/channels/{id}/rename - redenumeste un canal (ex: canal de voce)
+        public class RenameChannelDto
+        {
+            public string Name { get; set; } = string.Empty;
+        }
+
+        [HttpPut("{id}/rename")]
+        public async Task<IActionResult> RenameChannel(int id, [FromBody] RenameChannelDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Name))
+                return BadRequest("Numele canalului nu poate fi gol.");
+
+            var allChannels = await _channelRepository.GetAllAsync();
+            var channel = allChannels.FirstOrDefault(c => c.Id == id);
+            if (channel == null) return NotFound();
+
+            channel.Name = dto.Name;
+            _channelRepository.Update(channel);
+            await _channelRepository.SaveChangesAsync();
+
+            return Ok(channel);
+        }
     }
 }

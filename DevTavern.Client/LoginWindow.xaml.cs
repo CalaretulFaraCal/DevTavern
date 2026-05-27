@@ -12,6 +12,8 @@ using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 using System.IO;
 using System.Linq;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace DevTavern.Client
 {
@@ -50,6 +52,7 @@ namespace DevTavern.Client
                     string username = "user";
                     string avatarUrl = "";
                     string githubId = "";
+                    string displayName = "";
                     int currentUserId = 0;
 
                     using var client = new HttpClient();
@@ -58,6 +61,7 @@ namespace DevTavern.Client
                     var userResponse = await client.GetStringAsync("https://api.github.com/user");
                     var userJson = JObject.Parse(userResponse);
                     username = userJson["login"]?.ToString() ?? "user";
+                    displayName = userJson["name"]?.ToString() ?? username;
                     avatarUrl = userJson["avatar_url"]?.ToString() ?? "";
                     githubId = userJson["id"]?.ToString() ?? username;
 
@@ -69,10 +73,13 @@ namespace DevTavern.Client
                     if (existingUser != null)
                     {
                         currentUserId = existingUser["id"]?.ToObject<int>() ?? 0;
+                        var putData = new { Id = currentUserId, GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
+                        var putContent = new StringContent(JsonConvert.SerializeObject(putData), System.Text.Encoding.UTF8, "application/json");
+                        await _apiClient.PutAsync($"users/{currentUserId}", putContent);
                     }
                     else
                     {
-                        var postData = new { GitHubId = githubId, Username = username, AvatarUrl = avatarUrl };
+                        var postData = new { GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
                         var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
                         var createResp = await _apiClient.PostAsync("users", content);
                         if (createResp.IsSuccessStatusCode)
@@ -83,7 +90,9 @@ namespace DevTavern.Client
                     }
 
                     // Perform skip
-                    var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId);
+                    StatusText.Text = "Loading workspace...";
+                    var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId, displayName);
+                    await mainWindow.InitializeAsync();
                     mainWindow.Show();
                     this.Close();
                 }
@@ -113,8 +122,63 @@ namespace DevTavern.Client
                 LoginButton.IsEnabled = false;
 
                 _accessToken = await _githubAuth.LoginAndGetTokenAsync();
-                StatusText.Text = "Authenticated! ✓ Loading projects...";
+                StatusText.Text = "Authenticated! ✓ Checking account...";
 
+                // Fetch user info
+                string username = "user";
+                string avatarUrl = "";
+                string githubId = "";
+                string displayName = "";
+                int currentUserId = 0;
+
+                using var client = new HttpClient();
+                client.DefaultRequestHeaders.Add("User-Agent", "DevTavern-Client");
+                client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_accessToken}");
+                var userResponse = await client.GetStringAsync("https://api.github.com/user");
+                var userJson = JObject.Parse(userResponse);
+                username = userJson["login"]?.ToString() ?? "user";
+                displayName = userJson["name"]?.ToString() ?? username;
+                avatarUrl = userJson["avatar_url"]?.ToString() ?? "";
+                githubId = userJson["id"]?.ToString() ?? username;
+
+                var usersResp = await _apiClient.GetStringAsync("users");
+                var usersArr = JArray.Parse(usersResp);
+                var existingUser = usersArr.FirstOrDefault(u => u["gitHubId"]?.ToString() == githubId);
+
+                if (existingUser != null)
+                {
+                    currentUserId = existingUser["id"]?.ToObject<int>() ?? 0;
+                    var putData = new { Id = currentUserId, GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
+                    var putContent = new StringContent(JsonConvert.SerializeObject(putData), System.Text.Encoding.UTF8, "application/json");
+                    await _apiClient.PutAsync($"users/{currentUserId}", putContent);
+                }
+                else
+                {
+                    var postData = new { GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
+                    var content = new StringContent(JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
+                    var createResp = await _apiClient.PostAsync("users", content);
+                    if (createResp.IsSuccessStatusCode)
+                    {
+                        var newUserJson = JObject.Parse(await createResp.Content.ReadAsStringAsync());
+                        currentUserId = newUserJson["id"]?.ToObject<int>() ?? 0;
+                    }
+                }
+
+                // Skip project import if user is registered and cache exists
+                var projectsPath = "installed_projects.cache";
+                if (currentUserId > 0 && File.Exists(projectsPath))
+                {
+                    var cachedProjectsJson = await File.ReadAllTextAsync(projectsPath);
+                    var selectedRepos = JsonConvert.DeserializeObject<List<RepoItem>>(cachedProjectsJson) ?? new List<RepoItem>();
+                    StatusText.Text = "Loading workspace...";
+                    var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId, displayName);
+                    await mainWindow.InitializeAsync();
+                    mainWindow.Show();
+                    this.Close();
+                    return;
+                }
+
+                StatusText.Text = "Authenticated! ✓ Loading projects...";
                 await FetchReposAutomated();
             }
             catch (Exception ex)
@@ -180,6 +244,7 @@ namespace DevTavern.Client
             string username = "user";
             string avatarUrl = "";
             string githubId = "";
+            string displayName = "";
             int currentUserId = 0;
             try
             {
@@ -189,6 +254,7 @@ namespace DevTavern.Client
                 var userResponse = await client.GetStringAsync("https://api.github.com/user");
                 var userJson = JObject.Parse(userResponse);
                 username = userJson["login"]?.ToString() ?? "user";
+                displayName = userJson["name"]?.ToString() ?? username;
                 avatarUrl = userJson["avatar_url"]?.ToString() ?? "";
                 githubId = userJson["id"]?.ToString() ?? username;
 
@@ -200,10 +266,13 @@ namespace DevTavern.Client
                 if (existingUser != null)
                 {
                     currentUserId = existingUser["id"]?.ToObject<int>() ?? 0;
+                    var putData = new { Id = currentUserId, GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
+                    var putContent = new StringContent(JsonConvert.SerializeObject(putData), System.Text.Encoding.UTF8, "application/json");
+                    await _apiClient.PutAsync($"users/{currentUserId}", putContent);
                 }
                 else
                 {
-                    var postData = new { GitHubId = githubId, Username = username, AvatarUrl = avatarUrl };
+                    var postData = new { GitHubId = githubId, Username = username, DisplayName = displayName, AvatarUrl = avatarUrl };
                     var content = new StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(postData), System.Text.Encoding.UTF8, "application/json");
                     var createResp = await _apiClient.PostAsync("users", content);
                     if (createResp.IsSuccessStatusCode)
@@ -222,7 +291,9 @@ namespace DevTavern.Client
             }
             catch { }
 
-            var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId);
+            StatusText.Text = "Loading workspace...";
+            var mainWindow = new MainWindow(_accessToken, selectedRepos, username, avatarUrl, currentUserId, displayName);
+            await mainWindow.InitializeAsync();
             mainWindow.Show();
             this.Close();
         }
@@ -253,6 +324,84 @@ namespace DevTavern.Client
         {
             get => _hasUnreadMessages;
             set { _hasUnreadMessages = value; OnPropertyChanged(); }
+        }
+
+        private string? _customImagePath;
+        public string? CustomImagePath
+        {
+            get => _customImagePath;
+            set
+            {
+                _customImagePath = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasCustomImage));
+                OnPropertyChanged(nameof(CustomImageSource));
+            }
+        }
+
+        private string? _serverImageUrl;
+        public string? ServerImageUrl
+        {
+            get => _serverImageUrl;
+            set
+            {
+                _serverImageUrl = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasCustomImage));
+                OnPropertyChanged(nameof(CustomImageSource));
+            }
+        }
+
+        public bool HasCustomImage =>
+            !string.IsNullOrEmpty(_serverImageUrl) ||
+            (!string.IsNullOrEmpty(_customImagePath) && File.Exists(_customImagePath));
+
+        public ImageSource? CustomImageSource
+        {
+            get
+            {
+                if (!string.IsNullOrEmpty(_serverImageUrl))
+                {
+                    try
+                    {
+                        if (_serverImageUrl.StartsWith("data:"))
+                        {
+                            var comma = _serverImageUrl.IndexOf(',');
+                            var base64 = comma >= 0 ? _serverImageUrl.Substring(comma + 1) : _serverImageUrl;
+                            var bytes = Convert.FromBase64String(base64);
+                            var bmp = new BitmapImage();
+                            using var ms = new System.IO.MemoryStream(bytes);
+                            bmp.BeginInit();
+                            bmp.StreamSource = ms;
+                            bmp.CacheOption = BitmapCacheOption.OnLoad;
+                            bmp.EndInit();
+                            return bmp;
+                        }
+                        else
+                        {
+                            var bmp = new BitmapImage();
+                            bmp.BeginInit();
+                            bmp.UriSource = new Uri(_serverImageUrl);
+                            bmp.CacheOption = BitmapCacheOption.OnLoad;
+                            bmp.EndInit();
+                            return bmp;
+                        }
+                    }
+                    catch { }
+                }
+                if (string.IsNullOrEmpty(_customImagePath) || !File.Exists(_customImagePath)) return null;
+                try
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.UriSource = new Uri(_customImagePath!);
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+                    bmp.EndInit();
+                    return bmp;
+                }
+                catch { return null; }
+            }
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

@@ -53,5 +53,29 @@ namespace DevTavern.Server.Controllers
             
             return CreatedAtAction(nameof(GetUserById), new { id = newUser.Id }, newUser);
         }
+
+        // PUT /api/users/{id}
+        [HttpPut("{id}")]
+        public async Task<IActionResult> UpdateUser(int id, User updatedUser)
+        {
+            if (id != updatedUser.Id)
+            {
+                return BadRequest("ID-ul din ruta nu se potriveste cu ID-ul utilizatorului.");
+            }
+
+            var existingUser = await _userRepository.GetByIdAsync(id);
+            if (existingUser == null)
+            {
+                return NotFound($"Utilizatorul cu ID {id} nu exista.");
+            }
+
+            existingUser.DisplayName = updatedUser.DisplayName;
+            existingUser.AvatarUrl = updatedUser.AvatarUrl;
+            existingUser.Username = updatedUser.Username;
+
+            _userRepository.Update(existingUser);
+
+            return NoContent();
+        }
     }
 }
