@@ -11,7 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Update="Assets\*.wav">
+    <None Update="Assets\Sounds_Default\*.wav">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Assets\Sounds_Themed\*.wav">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Assets\*.ico">
